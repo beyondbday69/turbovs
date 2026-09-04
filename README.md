@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/beyondbday69/turbovs/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondbday69/turbovs/actions)
 [![Screenshot](https://github.com/beyondbday69/turbovs/actions/workflows/screenshot.yml/badge.svg)](https://github.com/beyondbday69/turbovs/actions)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange.svg)](#)
 

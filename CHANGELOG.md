@@ -2,6 +2,15 @@
 
 All notable changes to the "TurboVs" extension will be documented in this file.
 
+## [1.1.0] - 2026-09-04
+
+### Added
+- **Pure Script Output Only**: Terminal displays exclusively the compiled program's `stdout` with zero bash command echoes, shell prompts, or DOSBox startup noise via a dedicated VS Code `Pseudoterminal`.
+- **Automatic Script Input Detection**: Static analysis engine (`detectScriptInputs`) analyzes C/C++ source code to detect all `cin >>`, `scanf`, `cin.getline`, `gets`, and `getch` calls and automatically associates preceding `cout` and `printf` prompt labels.
+- **Dedicated Separate Input Panel (`turbovs.openInputPanel`)**: Interactive UI with individual input cards for each detected variable, real-time keystroke synchronization to `TC_IN.TXT`, dynamic add/remove fields, and a live piped sequence preview.
+- **Check Script Inputs Command (`turbovs.checkScriptInputs`)**: Command to inspect active script input requirements with actionable run/configure prompts.
+- **New High-Res Extension Logo**: Redesigned 256×256 app logo featuring a glowing retro-futuristic CRT monitor with electric cyan/blue lighting and C++ emblem.
+
 ## [1.0.0] - 2026-09-04
 
 ### Added

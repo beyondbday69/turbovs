@@ -31,8 +31,8 @@ VSIX_FILE="$(find "$SCRIPT_DIR" -maxdepth 1 -name "turbovs-*.vsix" -print -quit)
 
 if [ -z "$VSIX_FILE" ]; then
     echo "    - Local VSIX not found. Downloading from GitHub..."
-    DOWNLOAD_URL="https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.0.0.vsix"
-    VSIX_FILE="$SCRIPT_DIR/turbovs-1.0.0.vsix"
+    DOWNLOAD_URL="https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.1.0.vsix"
+    VSIX_FILE="$SCRIPT_DIR/turbovs-1.1.0.vsix"
     curl -fsSL "$DOWNLOAD_URL" -o "$VSIX_FILE" || wget -qO "$VSIX_FILE" "$DOWNLOAD_URL"
 fi
 

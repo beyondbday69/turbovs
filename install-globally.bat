@@ -82,12 +82,12 @@ for %%f in ("%SCRIPT_DIR%*.vsix") do (
 )
 
 echo    - Local VSIX not found. Downloading latest TurboVs from GitHub...
-set "DOWNLOAD_URL=https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.0.0.vsix"
-set "VSIX_FILE=%SCRIPT_DIR%turbovs-1.0.0.vsix"
+set "DOWNLOAD_URL=https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.1.0.vsix"
+set "VSIX_FILE=%SCRIPT_DIR%turbovs-1.1.0.vsix"
 
 powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('%DOWNLOAD_URL%', '%VSIX_FILE%')" >nul 2>&1
 if not exist "%VSIX_FILE%" (
-    echo [ERROR] Could not download turbovs-1.0.0.vsix from GitHub.
+    echo [ERROR] Could not download turbovs-1.1.0.vsix from GitHub.
     echo Please download it manually from https://github.com/beyondbday69/turbovs/releases
     pause
     exit /b 1
