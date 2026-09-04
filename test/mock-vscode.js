@@ -20,9 +20,25 @@ const mockVscode = {
         showQuickPick: async () => null,
         showOpenDialog: async () => null,
         showInputBox: async () => '',
+        createInputBox: () => ({
+            title: '',
+            step: 1,
+            totalSteps: 1,
+            prompt: '',
+            placeholder: '',
+            value: '',
+            ignoreFocusOut: true,
+            show: () => {},
+            hide: () => {},
+            dispose: () => {},
+            onDidAccept: () => ({ dispose: () => {} }),
+            onDidHide: () => ({ dispose: () => {} })
+        }),
         createWebviewPanel: () => ({
             webview: {
                 html: '',
+                cspSource: 'https://*.vscode-cdn.net',
+                asWebviewUri: (uri) => uri,
                 postMessage: () => {},
                 onDidReceiveMessage: () => ({ dispose: () => {} })
             },
@@ -76,7 +92,12 @@ const mockVscode = {
     },
     Uri: {
         parse: (str) => ({ fsPath: str, toString: () => str }),
-        file: (str) => ({ fsPath: str, toString: () => str })
+        file: (str) => ({ fsPath: str, toString: () => str }),
+        joinPath: (base, ...segments) => {
+            const p = require('path');
+            const joined = p.join(base.fsPath || base.toString(), ...segments);
+            return { fsPath: joined, toString: () => joined };
+        }
     },
     EventEmitter: class {
         constructor() {

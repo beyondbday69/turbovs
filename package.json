@@ -282,5 +282,9 @@
   "bugs": {
     "url": "https://github.com/beyondbday69/turbovs/issues"
   },
-  "homepage": "https://github.com/beyondbday69/turbovs#readme"
+  "homepage": "https://github.com/beyondbday69/turbovs#readme",
+  "dependencies": {
+    "@vscode/codicons": "^0.0.46-24",
+    "@vscode/webview-ui-toolkit": "^1.4.0"
+  }
 }

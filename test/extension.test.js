@@ -202,4 +202,33 @@ assert(htmlWithInputs.includes('stdinInput'), 'Must include raw multiline textar
 assert(htmlWithInputs.includes('Result: 15'), 'Must include output');
 console.log('  ✔ getIoWebviewHtml with separate inputs generated valid UI.');
 
-console.log('\n--- ALL UNIT TESTS (12/12) PASSED SUCCESSFULLY! ---');
+// Test 13: Verify official VS Code Webview UI Toolkit components in generated HTML
+console.log('[Test 13] Testing VS Code Webview UI Toolkit components...');
+assert(htmlWithInputs.includes('<vscode-panels'), 'Must contain <vscode-panels> component');
+assert(htmlWithInputs.includes('<vscode-panel-tab'), 'Must contain <vscode-panel-tab> component');
+assert(htmlWithInputs.includes('<vscode-panel-view'), 'Must contain <vscode-panel-view> component');
+assert(htmlWithInputs.includes('<vscode-button'), 'Must contain <vscode-button> component');
+assert(htmlWithInputs.includes('<vscode-badge'), 'Must contain <vscode-badge> component');
+assert(htmlWithInputs.includes('<vscode-divider'), 'Must contain <vscode-divider> component');
+assert(htmlWithInputs.includes('<vscode-text-area'), 'Must contain <vscode-text-area> component');
+assert(htmlWithInputs.includes('codicon'), 'Must include codicon icons');
+console.log('  ✔ Webview UI Toolkit components and codicons validated.');
+
+// Test 14: Verify webview asset URI resolution with context
+console.log('[Test 14] Testing webview asset URI resolution...');
+const mockWebview = {
+    cspSource: 'https://*.vscode-cdn.net',
+    asWebviewUri: (uri) => `vscode-resource://${uri.fsPath}`
+};
+const mockCtx = {
+    extensionPath: path.resolve(__dirname, '..'),
+    extensionUri: { fsPath: path.resolve(__dirname, '..') }
+};
+const fullHtml = ext.getIoWebviewHtml('10', 'Done', detectedCpp, 'calc.cpp', 'form', mockWebview, mockCtx);
+assert(fullHtml.includes('toolkit.min.js'), 'Must load toolkit.min.js script');
+assert(fullHtml.includes('codicon.css'), 'Must load codicon.css stylesheet');
+assert(fullHtml.includes('Content-Security-Policy'), 'Must include CSP header');
+console.log('  ✔ Webview asset URI resolution validated.');
+
+console.log('\n--- ALL UNIT TESTS (14/14) PASSED SUCCESSFULLY! ---');
+

@@ -16,6 +16,7 @@ let currentCustomInput = '';
 let lastProgramOutput = '';
 let executionStartTime = 0;
 let activeProcess = null;
+let globalExtensionContext = null;
 
 /**
  * Helper to get configuration with turbovs primary and turboCpp fallback
@@ -47,6 +48,7 @@ async function updateSetting(key, value) {
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
+    globalExtensionContext = context;
     // 1. Create Diagnostics Collection for compiler error reporting
     diagnosticCollection = vscode.languages.createDiagnosticCollection('turbovs');
     context.subscriptions.push(diagnosticCollection);
@@ -867,13 +869,24 @@ function openIoPanel(context, preferredTab = 'form') {
         return ioWebviewPanel;
     }
 
+    const effectiveContext = context || globalExtensionContext;
+    const extPath = (effectiveContext && effectiveContext.extensionPath) ? effectiveContext.extensionPath : __dirname;
+    const localResourceRoots = [];
+    if (effectiveContext && effectiveContext.extensionUri && typeof vscode.Uri.joinPath === 'function') {
+        try {
+            localResourceRoots.push(vscode.Uri.joinPath(effectiveContext.extensionUri, 'media'));
+        } catch (_) {}
+    }
+    localResourceRoots.push(vscode.Uri.file(path.join(extPath, 'media')));
+
     ioWebviewPanel = vscode.window.createWebviewPanel(
         'turbovsIoPanel',
         'TurboVs: Input / Output',
         vscode.ViewColumn.Beside,
         {
             enableScripts: true,
-            retainContextWhenHidden: true
+            retainContextWhenHidden: true,
+            localResourceRoots
         }
     );
 
@@ -895,7 +908,15 @@ function openIoPanel(context, preferredTab = 'form') {
         }
     }
 
-    ioWebviewPanel.webview.html = getIoWebviewHtml(currentCustomInput, lastProgramOutput, detectedInputs, activeFileName, preferredTab);
+    ioWebviewPanel.webview.html = getIoWebviewHtml(
+        currentCustomInput,
+        lastProgramOutput,
+        detectedInputs,
+        activeFileName,
+        preferredTab,
+        ioWebviewPanel.webview,
+        effectiveContext
+    );
 
     ioWebviewPanel.webview.onDidReceiveMessage(async message => {
         switch (message.command) {
@@ -971,7 +992,51 @@ async function checkScriptInputsPrompt(context) {
 }
 
 /**
- * Command: Set Program Input (stdin) via quick input box
+ * Interactive multi-step input box using VS Code native InputBox UI component
+ */
+async function promptMultiStepInputs(detectedInputs, initialVal = '', activeFileName = 'Program') {
+    return new Promise((resolve) => {
+        const initialLines = initialVal ? initialVal.split(/\r?\n/) : [];
+        const results = [];
+
+        function showStep(index) {
+            if (index >= detectedInputs.length) {
+                resolve(results.join('\n'));
+                return;
+            }
+
+            const item = detectedInputs[index];
+            const inputBox = vscode.window.createInputBox();
+            inputBox.title = `TurboVs Input: ${activeFileName}`;
+            inputBox.step = index + 1;
+            inputBox.totalSteps = detectedInputs.length;
+            inputBox.prompt = item.label || `Enter value for ${item.variable} (${item.type || 'cin'}):`;
+            inputBox.placeholder = item.placeholder || `Value for ${item.variable}`;
+            inputBox.value = initialLines[index] !== undefined ? initialLines[index] : (item.defaultValue || '');
+            inputBox.ignoreFocusOut = true;
+
+            inputBox.onDidAccept(() => {
+                results.push(inputBox.value);
+                inputBox.dispose();
+                showStep(index + 1);
+            });
+
+            inputBox.onDidHide(() => {
+                inputBox.dispose();
+                if (results.length < detectedInputs.length) {
+                    resolve(null);
+                }
+            });
+
+            inputBox.show();
+        }
+
+        showStep(0);
+    });
+}
+
+/**
+ * Command: Set Program Input (stdin) via quick input box or multi-step prompt
  * @param {vscode.ExtensionContext} context
  */
 async function setInputPrompt(context) {
@@ -988,20 +1053,73 @@ async function setInputPrompt(context) {
         }
     }
 
-    const input = await vscode.window.showInputBox({
-        title: 'TurboVs: Set Program Input (stdin)',
-        prompt: 'Enter inputs for cin >> or scanf (use \\n to separate lines for multiple prompts)',
-        value: initialVal ? initialVal.replace(/\r?\n/g, '\\n') : '',
-        placeHolder: 'e.g. 10\\n+\\n5'
-    });
+    const doc = editor ? editor.document : null;
+    const activeFileName = doc ? path.basename(doc.fileName) : 'active_program.cpp';
+    const detectedInputs = doc ? detectScriptInputs(doc.getText()) : [];
 
-    if (input !== undefined) {
-        const normalized = input.replace(/\\n/g, '\n');
-        currentCustomInput = normalized;
-        syncInputToDisk(normalized);
+    let finalInput = undefined;
+
+    if (detectedInputs.length > 1) {
+        const varList = detectedInputs.map(d => d.variable).join(', ');
+        const pick = await vscode.window.showQuickPick([
+            {
+                label: `$(list-ordered) Step-by-Step Native Inputs (${detectedInputs.length} detected)`,
+                description: `Variables: ${varList}`,
+                action: 'multistep'
+            },
+            {
+                label: '$(layout-panel) Open Dedicated I/O Panel (Webview UI)',
+                description: 'Interactive page with separate input fields & live output',
+                action: 'panel'
+            },
+            {
+                label: '$(edit) Single Line Input (Raw \\n separated)',
+                description: 'Enter raw multiline inputs separated by \\n',
+                action: 'single'
+            }
+        ], {
+            placeHolder: `Select input method for ${activeFileName} (${detectedInputs.length} inputs detected)`
+        });
+
+        if (!pick) return;
+
+        if (pick.action === 'panel') {
+            openInputPanel(context);
+            return;
+        } else if (pick.action === 'multistep') {
+            finalInput = await promptMultiStepInputs(detectedInputs, initialVal, activeFileName);
+        } else {
+            finalInput = await vscode.window.showInputBox({
+                title: `TurboVs: Set Program Input (${activeFileName})`,
+                prompt: 'Enter inputs for cin >> or scanf (use \\n to separate lines for multiple prompts)',
+                value: initialVal ? initialVal.replace(/\r?\n/g, '\\n') : '',
+                placeHolder: 'e.g. 10\\n+\\n5'
+            });
+            if (finalInput !== undefined) {
+                finalInput = finalInput.replace(/\\n/g, '\n');
+            }
+        }
+    } else {
+        const promptText = detectedInputs.length === 1
+            ? (detectedInputs[0].label || `Enter input for ${detectedInputs[0].variable}:`)
+            : 'Enter inputs for cin >> or scanf (use \\n to separate lines for multiple prompts)';
+        const input = await vscode.window.showInputBox({
+            title: `TurboVs: Set Program Input (${activeFileName})`,
+            prompt: promptText,
+            value: initialVal ? initialVal.replace(/\r?\n/g, '\\n') : '',
+            placeHolder: detectedInputs.length === 1 ? (detectedInputs[0].placeholder || 'Value') : 'e.g. 10\\n+\\n5'
+        });
+        if (input !== undefined) {
+            finalInput = input.replace(/\\n/g, '\n');
+        }
+    }
+
+    if (finalInput !== undefined && finalInput !== null) {
+        currentCustomInput = finalInput;
+        syncInputToDisk(finalInput);
 
         if (ioWebviewPanel) {
-            ioWebviewPanel.webview.postMessage({ command: 'setInput', text: normalized });
+            ioWebviewPanel.webview.postMessage({ command: 'setInput', text: finalInput });
         }
 
         const choice = await vscode.window.showInformationMessage(
@@ -1020,20 +1138,49 @@ async function setInputPrompt(context) {
 /**
  * Generate HTML for the I/O webview panel with separate input fields per detected input
  */
-function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], activeFileName = 'Program', initialTab = 'form') {
+/**
+ * Generate HTML for the I/O webview panel with official VS Code UI Components
+ */
+function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], activeFileName = 'Program', initialTab = 'form', webview = null, context = null) {
     const escapedFileName = escapeHtml(activeFileName);
     const hasOutput = initialOutput && initialOutput.trim().length > 0;
     const escapedOutput = hasOutput ? escapeHtml(initialOutput) : 'Program output will appear here after execution...';
     const outputClass = hasOutput ? 'output-box' : 'output-box empty';
     const jsonDetected = JSON.stringify(detectedInputs || []);
     const escapedInitialInput = escapeHtml(initialInput || '');
+    const activeTabId = initialTab === 'raw' ? 'tab-raw' : 'tab-form';
+
+    let toolkitUri = '';
+    let codiconUri = '';
+    const effectiveContext = context || globalExtensionContext;
+    const extPath = (effectiveContext && effectiveContext.extensionPath) ? effectiveContext.extensionPath : __dirname;
+
+    if (webview && typeof webview.asWebviewUri === 'function') {
+        if (effectiveContext && effectiveContext.extensionUri && typeof vscode.Uri.joinPath === 'function') {
+            try {
+                toolkitUri = webview.asWebviewUri(vscode.Uri.joinPath(effectiveContext.extensionUri, 'media', 'toolkit.min.js'));
+                codiconUri = webview.asWebviewUri(vscode.Uri.joinPath(effectiveContext.extensionUri, 'media', 'codicon.css'));
+            } catch (_) {}
+        }
+        if (!toolkitUri) {
+            try {
+                toolkitUri = webview.asWebviewUri(vscode.Uri.file(path.join(extPath, 'media', 'toolkit.min.js')));
+                codiconUri = webview.asWebviewUri(vscode.Uri.file(path.join(extPath, 'media', 'codicon.css')));
+            } catch (_) {}
+        }
+    }
+
+    const cspSource = (webview && webview.cspSource) ? webview.cspSource : '*';
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${cspSource} data:; style-src ${cspSource} 'unsafe-inline'; script-src ${cspSource} 'unsafe-inline';">
 <title>TurboVs I/O - Input &amp; Output</title>
+${codiconUri ? `<link rel="stylesheet" href="${codiconUri}">` : ''}
+${toolkitUri ? `<script type="module" src="${toolkitUri}"></script>` : ''}
 <style>
   :root {
     --bg-color: var(--vscode-editor-background, #1e1e1e);
@@ -1041,18 +1188,9 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     --input-bg: var(--vscode-input-background, #252526);
     --input-fg: var(--vscode-input-foreground, #cccccc);
     --input-border: var(--vscode-input-border, #3c3c3c);
-    --btn-bg: var(--vscode-button-background, #0e639c);
-    --btn-fg: var(--vscode-button-foreground, #ffffff);
-    --btn-hover: var(--vscode-button-hoverBackground, #1177bb);
-    --btn-sec-bg: var(--vscode-button-secondaryBackground, #3a3d41);
-    --btn-sec-fg: var(--vscode-button-secondaryForeground, #ffffff);
-    --btn-sec-hover: var(--vscode-button-secondaryHoverBackground, #45494e);
-    --border-color: var(--vscode-panel-border, #333333);
-    --badge-bg: var(--vscode-badge-background, #4d4d4d);
-    --badge-fg: var(--vscode-badge-foreground, #ffffff);
     --card-bg: var(--vscode-editorWidget-background, #252526);
     --card-border: var(--vscode-editorWidget-border, #333333);
-    --font-mono: var(--vscode-editor-font-family, 'Courier New', Courier, monospace);
+    --font-mono: var(--vscode-editor-font-family, 'Consolas', 'Courier New', monospace);
     --font-sans: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   }
   body {
@@ -1071,10 +1209,12 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 10px;
-    border-bottom: 1px solid var(--border-color);
-    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--vscode-panel-border, #333333);
+    margin-bottom: 6px;
     flex-shrink: 0;
+    gap: 12px;
+    flex-wrap: wrap;
   }
   .title-group {
     display: flex;
@@ -1083,113 +1223,38 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     flex-wrap: wrap;
   }
   .logo-title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 700;
     letter-spacing: 0.3px;
     display: flex;
     align-items: center;
     gap: 6px;
-  }
-  .badge {
-    font-size: 11px;
-    padding: 2px 8px;
-    border-radius: 12px;
-    background: var(--badge-bg);
-    color: var(--badge-fg);
-    font-weight: 500;
-  }
-  .badge.file-badge {
-    background: #1f4f7a;
-    color: #e0f0ff;
-  }
-  .badge.count-badge {
-    background: #2b3a4a;
-    color: #4dc4ff;
-    border: 1px solid #1f4f7a;
-  }
-  .badge.running {
-    background: #e5a50a;
-    color: #111;
-  }
-  .badge.success {
-    background: #2ea043;
-    color: #fff;
-  }
-  .badge.error {
-    background: #f85149;
-    color: #fff;
+    color: var(--fg-color);
   }
   .actions {
     display: flex;
     gap: 8px;
     align-items: center;
   }
-  button {
-    background-color: var(--btn-bg);
-    color: var(--btn-fg);
-    border: none;
-    padding: 6px 12px;
+  vscode-panels {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-bottom: 6px;
+  }
+  vscode-panel-tab {
     font-size: 12px;
-    font-weight: 500;
-    border-radius: 3px;
     cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
     user-select: none;
   }
-  button:hover {
-    background-color: var(--btn-hover);
-  }
-  button.secondary {
-    background-color: var(--btn-sec-bg);
-    color: var(--btn-sec-fg);
-  }
-  button.secondary:hover {
-    background-color: var(--btn-sec-hover);
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .tab-bar {
-    display: flex;
-    gap: 6px;
-    margin-bottom: 8px;
-    align-items: center;
-  }
-  .tab-btn {
-    background: transparent;
-    color: var(--fg-color);
-    opacity: 0.7;
-    border: 1px solid transparent;
-    padding: 4px 10px;
-    font-size: 11px;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .tab-btn.active {
-    background: var(--card-bg);
-    border-color: var(--border-color);
-    opacity: 1;
-    font-weight: 600;
-  }
-  .panels-container {
+  vscode-panel-view {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    flex: 1;
     min-height: 0;
-  }
-  .input-panel {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    border-radius: 6px;
-    padding: 10px;
+    padding: 8px 0 4px 0;
+    box-sizing: border-box;
   }
   .fields-scroll {
     flex: 1;
@@ -1197,17 +1262,17 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding-right: 4px;
+    padding-right: 6px;
     min-height: 0;
   }
   .input-card {
-    background: var(--input-bg);
-    border: 1px solid var(--input-border);
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
     border-radius: 4px;
     padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 5px;
   }
   .input-card-header {
     display: flex;
@@ -1215,43 +1280,20 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     justify-content: space-between;
   }
   .input-card-title {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
-    color: #4dc4ff;
     display: flex;
     align-items: center;
     gap: 6px;
+    color: var(--fg-color);
   }
   .input-card-prompt {
     font-size: 12px;
-    font-weight: 500;
     color: var(--fg-color);
-  }
-  .input-field {
-    width: 100%;
-    background: var(--bg-color);
-    color: var(--input-fg);
-    border: 1px solid var(--input-border);
-    border-radius: 3px;
-    padding: 6px 8px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    box-sizing: border-box;
-    outline: none;
-  }
-  .input-field:focus {
-    border-color: var(--btn-bg);
+    opacity: 0.9;
   }
   .remove-field-btn {
-    background: transparent;
-    color: #ff6b6b;
-    padding: 2px 6px;
-    font-size: 11px;
-    opacity: 0.7;
-  }
-  .remove-field-btn:hover {
-    opacity: 1;
-    background: rgba(255, 107, 107, 0.1);
+    cursor: pointer;
   }
   .add-field-row {
     display: flex;
@@ -1263,30 +1305,29 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
   .preview-bar {
     font-size: 11px;
     color: var(--fg-color);
-    opacity: 0.6;
+    opacity: 0.7;
     font-family: var(--font-mono);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 320px;
+    max-width: 360px;
   }
-  textarea {
+  .raw-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  vscode-text-area, .rawTextarea {
     flex: 1;
     width: 100%;
-    background-color: var(--bg-color);
-    color: var(--input-fg);
-    border: 1px solid var(--input-border);
-    border-radius: 4px;
-    padding: 8px;
     font-family: var(--font-mono);
-    font-size: 13px;
-    line-height: 1.4;
-    resize: none;
+    min-height: 120px;
     box-sizing: border-box;
-    outline: none;
   }
-  textarea:focus {
-    border-color: var(--btn-bg);
+  vscode-divider {
+    margin: 6px 0;
+    flex-shrink: 0;
   }
   .output-panel {
     display: flex;
@@ -1295,8 +1336,8 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     min-height: 0;
     background: var(--card-bg);
     border: 1px solid var(--card-border);
-    border-radius: 6px;
-    padding: 10px;
+    border-radius: 4px;
+    padding: 8px 10px;
   }
   .output-header {
     display: flex;
@@ -1307,9 +1348,10 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
   }
   .output-title {
     font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     color: var(--fg-color);
   }
   .output-box {
@@ -1336,64 +1378,80 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
   }
   .time-badge {
     font-size: 11px;
-    opacity: 0.8;
-    margin-left: 6px;
     color: #3fb950;
+    font-weight: 600;
+  }
+  /* Fallback and helper styling */
+  vscode-text-field {
+    display: block;
+    width: 100%;
+  }
+  vscode-button, vscode-badge, vscode-text-field, vscode-text-area, vscode-panels, vscode-panel-tab, vscode-panel-view, vscode-divider {
+    box-sizing: border-box;
   }
 </style>
 </head>
 <body>
   <div class="header">
     <div class="title-group">
-      <span class="logo-title">⚡ TurboVs</span>
-      <span id="fileBadge" class="badge file-badge">📄 ${escapedFileName}</span>
-      <span id="countBadge" class="badge count-badge">📝 ${detectedInputs.length} Inputs Detected</span>
-      <span id="statusBadge" class="badge">Ready</span>
+      <span class="logo-title"><span class="codicon codicon-zap"></span> TurboVs I/O</span>
+      <vscode-badge id="fileBadge"><span class="codicon codicon-file-code"></span> ${escapedFileName}</vscode-badge>
+      <vscode-badge id="countBadge"><span class="codicon codicon-symbol-parameter"></span> ${detectedInputs.length} Inputs Detected</vscode-badge>
+      <vscode-badge id="statusBadge">Ready</vscode-badge>
       <span id="timeBadge" class="time-badge"></span>
     </div>
     <div class="actions">
-      <button id="runBtn" title="Run Current Program (Ctrl+F9)">▶ Run Program</button>
-      <button id="clearAllBtn" class="secondary" title="Clear all inputs and outputs">Clear All</button>
+      <vscode-button id="runBtn" appearance="primary" title="Run Current Program (Ctrl+F9)"><span class="codicon codicon-play"></span> Run Program</vscode-button>
+      <vscode-button id="clearAllBtn" appearance="secondary" title="Clear all inputs and outputs"><span class="codicon codicon-clear-all"></span> Clear All</vscode-button>
     </div>
   </div>
 
-  <div class="panels-container">
-    <div class="input-panel">
-      <div class="tab-bar">
-        <button id="tabFormBtn" class="tab-btn active">📋 Separate Input Fields (<span id="tabCount">${detectedInputs.length}</span>)</button>
-        <button id="tabRawBtn" class="tab-btn">📝 Raw Multiline Stdin</button>
-      </div>
+  <vscode-panels id="ioPanels" activeid="${activeTabId}">
+    <vscode-panel-tab id="tab-form">Separate Input Fields (<span id="tabCount">${detectedInputs.length}</span>)</vscode-panel-tab>
+    <vscode-panel-tab id="tab-raw">Raw Multiline Stdin</vscode-panel-tab>
 
-      <!-- Mode 1: Separate Fields for Each Detected Input -->
-      <div id="formModeContainer" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
-        <div id="fieldsScroll" class="fields-scroll"></div>
-        <div class="add-field-row">
-          <button id="addFieldBtn" class="secondary" style="font-size: 11px; padding: 3px 8px;">+ Add Input Field</button>
-          <span id="previewBar" class="preview-bar"></span>
-        </div>
+    <!-- Mode 1: Separate Fields for Each Detected Input -->
+    <vscode-panel-view id="view-form">
+      <div id="fieldsScroll" class="fields-scroll"></div>
+      <div class="add-field-row">
+        <vscode-button id="addFieldBtn" appearance="secondary"><span class="codicon codicon-add"></span> Add Input Field</vscode-button>
+        <span id="previewBar" class="preview-bar"></span>
       </div>
+    </vscode-panel-view>
 
-      <!-- Mode 2: Raw Multiline Textarea -->
-      <div id="rawModeContainer" style="display: none; flex-direction: column; flex: 1; min-height: 0;">
-        <textarea id="stdinInput" class="rawTextarea" placeholder="Enter input values here (one per line)...">${escapedInitialInput}</textarea>
+    <!-- Mode 2: Raw Multiline Textarea -->
+    <vscode-panel-view id="view-raw">
+      <div class="raw-wrapper">
+        <vscode-text-area id="stdinInput" class="rawTextarea" rows="8" resize="vertical" placeholder="Enter input values here (one per line)...">${escapedInitialInput}</vscode-text-area>
       </div>
+    </vscode-panel-view>
+  </vscode-panels>
+
+  <vscode-divider></vscode-divider>
+
+  <div class="output-panel">
+    <div class="output-header">
+      <span class="output-title"><span class="codicon codicon-terminal"></span> Program Output (Pure Stdout)</span>
+      <vscode-button id="copyBtn" appearance="secondary"><span class="codicon codicon-copy"></span> Copy Output</vscode-button>
     </div>
-
-    <div class="output-panel">
-      <div class="output-header">
-        <span class="output-title">Program Output (Pure Stdout)</span>
-        <button id="copyBtn" class="secondary" style="padding: 2px 8px; font-size: 11px;">📋 Copy Output</button>
-      </div>
-      <pre id="stdoutOutput" class="${outputClass}">${escapedOutput}</pre>
-    </div>
+    <pre id="stdoutOutput" class="${outputClass}">${escapedOutput}</pre>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
 
+    function escapeHtmlClient(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
     let detectedInputs = ${jsonDetected};
     let currentInputs = [];
-    let isRawMode = false;
 
     const fileBadge = document.getElementById('fileBadge');
     const countBadge = document.getElementById('countBadge');
@@ -1401,22 +1459,19 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     const timeBadge = document.getElementById('timeBadge');
     const runBtn = document.getElementById('runBtn');
     const clearAllBtn = document.getElementById('clearAllBtn');
-    const tabFormBtn = document.getElementById('tabFormBtn');
-    const tabRawBtn = document.getElementById('tabRawBtn');
-    const formModeContainer = document.getElementById('formModeContainer');
-    const rawModeContainer = document.getElementById('rawModeContainer');
+    const tabForm = document.getElementById('tab-form');
+    const tabRaw = document.getElementById('tab-raw');
+    const ioPanels = document.getElementById('ioPanels');
     const fieldsScroll = document.getElementById('fieldsScroll');
     const addFieldBtn = document.getElementById('addFieldBtn');
     const previewBar = document.getElementById('previewBar');
     const rawTextarea = document.getElementById('stdinInput');
-    const stdinInput = rawTextarea;
     const stdoutOutput = document.getElementById('stdoutOutput');
     const copyBtn = document.getElementById('copyBtn');
     const tabCount = document.getElementById('tabCount');
 
-    // Parse initial input lines into separate fields
     function initFieldsFromData() {
-      const initialRaw = rawTextarea.value;
+      const initialRaw = rawTextarea ? rawTextarea.value : '';
       const rawLines = initialRaw.split(/\\r?\\n/).filter((_, idx, arr) => idx < arr.length - 1 || _ !== '');
 
       currentInputs = [];
@@ -1431,7 +1486,6 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
             value: val
           });
         });
-        // If raw has more lines than detected
         for (let i = detectedInputs.length; i < rawLines.length; i++) {
           currentInputs.push({
             type: 'extra',
@@ -1464,9 +1518,10 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     }
 
     function renderFields() {
+      if (!fieldsScroll) return;
       fieldsScroll.innerHTML = '';
-      tabCount.textContent = currentInputs.length;
-      countBadge.textContent = '📝 ' + currentInputs.length + ' Inputs Configured';
+      if (tabCount) tabCount.textContent = currentInputs.length;
+      if (countBadge) countBadge.innerHTML = '<span class="codicon codicon-symbol-parameter"></span> ' + currentInputs.length + ' Inputs Configured';
 
       currentInputs.forEach((item, index) => {
         const card = document.createElement('div');
@@ -1477,11 +1532,15 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
 
         const title = document.createElement('span');
         title.className = 'input-card-title';
-        title.textContent = 'Input #' + (index + 1) + ' · ' + (item.type || 'cin') + (item.variable ? (' >> ' + item.variable) : '');
+        const typeLabel = escapeHtmlClient(item.type || 'cin');
+        const varLabel = item.variable ? (' >> ' + escapeHtmlClient(item.variable)) : '';
+        title.innerHTML = '<span class="codicon codicon-symbol-variable"></span> Input #' + (index + 1) + ' &nbsp;<vscode-badge>' + typeLabel + varLabel + '</vscode-badge>';
 
-        const removeBtn = document.createElement('button');
+        const removeBtn = document.createElement('vscode-button');
+        removeBtn.setAttribute('appearance', 'icon');
+        removeBtn.setAttribute('aria-label', 'Remove field');
         removeBtn.className = 'remove-field-btn';
-        removeBtn.textContent = '✕';
+        removeBtn.innerHTML = '<span class="codicon codicon-close"></span>';
         removeBtn.title = 'Remove field';
         removeBtn.addEventListener('click', () => {
           currentInputs.splice(index, 1);
@@ -1496,11 +1555,11 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
         promptLabel.className = 'input-card-prompt';
         promptLabel.textContent = item.label || ('Enter input #' + (index + 1) + ':');
 
-        const inputEl = document.createElement('input');
-        inputEl.type = 'text';
+        const inputEl = document.createElement('vscode-text-field');
         inputEl.className = 'input-field';
-        inputEl.placeholder = item.placeholder || 'Enter value';
+        inputEl.setAttribute('placeholder', item.placeholder || 'Enter value');
         inputEl.value = item.value || '';
+        inputEl.setAttribute('value', item.value || '');
         inputEl.addEventListener('input', (e) => {
           item.value = e.target.value;
           syncRawFromFields();
@@ -1518,12 +1577,13 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
 
     function syncRawFromFields() {
       const combined = currentInputs.map(i => i.value).join('\\n');
-      rawTextarea.value = combined;
+      if (rawTextarea) rawTextarea.value = combined;
       updatePreview();
       vscode.postMessage({ command: 'updateInput', text: combined });
     }
 
     function syncFieldsFromRaw() {
+      if (!rawTextarea) return;
       const lines = rawTextarea.value.split(/\\r?\\n/);
       currentInputs = lines.map((line, idx) => {
         const existing = currentInputs[idx];
@@ -1540,106 +1600,136 @@ function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], acti
     }
 
     function updatePreview() {
+      if (!previewBar) return;
       const tokens = currentInputs.map(i => i.value !== '' ? i.value : '(empty)');
       previewBar.textContent = 'Piped: [ ' + tokens.join(' ] ↵ [ ') + ' ]';
     }
 
-    // Add Field button
-    addFieldBtn.addEventListener('click', () => {
-      const nextIdx = currentInputs.length + 1;
-      currentInputs.push({
-        type: 'custom',
-        variable: 'in_' + nextIdx,
-        label: 'Custom Input #' + nextIdx,
-        placeholder: 'Value',
-        value: ''
+    if (addFieldBtn) {
+      addFieldBtn.addEventListener('click', () => {
+        const nextIdx = currentInputs.length + 1;
+        currentInputs.push({
+          type: 'custom',
+          variable: 'in_' + nextIdx,
+          label: 'Custom Input #' + nextIdx,
+          placeholder: 'Value',
+          value: ''
+        });
+        renderFields();
+        syncRawFromFields();
       });
-      renderFields();
-      syncRawFromFields();
-    });
+    }
 
-    // Tab Switching
-    tabFormBtn.addEventListener('click', () => {
-      isRawMode = false;
-      tabFormBtn.classList.add('active');
-      tabRawBtn.classList.remove('active');
-      formModeContainer.style.display = 'flex';
-      rawModeContainer.style.display = 'none';
-      syncFieldsFromRaw();
-    });
+    if (ioPanels) {
+      ioPanels.addEventListener('change', (e) => {
+        const activeId = (e.target && e.target.activeid) || ioPanels.getAttribute('activeid');
+        if (activeId === 'tab-raw') {
+          syncRawFromFields();
+        } else if (activeId === 'tab-form') {
+          syncFieldsFromRaw();
+        }
+      });
+    }
 
-    tabRawBtn.addEventListener('click', () => {
-      isRawMode = true;
-      tabRawBtn.classList.add('active');
-      tabFormBtn.classList.remove('active');
-      rawModeContainer.style.display = 'flex';
-      formModeContainer.style.display = 'none';
-    });
+    if (tabForm) {
+      tabForm.addEventListener('click', () => {
+        setTimeout(syncFieldsFromRaw, 20);
+      });
+    }
+    if (tabRaw) {
+      tabRaw.addEventListener('click', () => {
+        setTimeout(syncRawFromFields, 20);
+      });
+    }
 
-    rawTextarea.addEventListener('input', () => {
-      updatePreview();
-      vscode.postMessage({ command: 'updateInput', text: rawTextarea.value });
-    });
+    if (rawTextarea) {
+      rawTextarea.addEventListener('input', () => {
+        updatePreview();
+        vscode.postMessage({ command: 'updateInput', text: rawTextarea.value });
+      });
+      rawTextarea.addEventListener('change', () => {
+        updatePreview();
+        vscode.postMessage({ command: 'updateInput', text: rawTextarea.value });
+      });
+    }
 
-    runBtn.addEventListener('click', () => {
-      vscode.postMessage({ command: 'run' });
-    });
+    if (runBtn) {
+      runBtn.addEventListener('click', () => {
+        vscode.postMessage({ command: 'run' });
+      });
+    }
 
-    clearAllBtn.addEventListener('click', () => {
-      currentInputs = [];
-      rawTextarea.value = '';
-      renderFields();
-      stdoutOutput.textContent = 'Program output will appear here after execution...';
-      stdoutOutput.classList.add('empty');
-      statusBadge.textContent = 'Ready';
-      statusBadge.className = 'badge';
-      timeBadge.textContent = '';
-      vscode.postMessage({ command: 'clearInput' });
-      vscode.postMessage({ command: 'clearOutput' });
-    });
+    if (clearAllBtn) {
+      clearAllBtn.addEventListener('click', () => {
+        currentInputs = [];
+        if (rawTextarea) rawTextarea.value = '';
+        renderFields();
+        if (stdoutOutput) {
+          stdoutOutput.textContent = 'Program output will appear here after execution...';
+          stdoutOutput.classList.add('empty');
+        }
+        if (statusBadge) {
+          statusBadge.textContent = 'Ready';
+        }
+        if (timeBadge) timeBadge.textContent = '';
+        vscode.postMessage({ command: 'clearInput' });
+        vscode.postMessage({ command: 'clearOutput' });
+      });
+    }
 
-    copyBtn.addEventListener('click', () => {
-      const text = stdoutOutput.classList.contains('empty') ? '' : stdoutOutput.textContent;
-      vscode.postMessage({ command: 'copyOutput', text });
-    });
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        const text = (stdoutOutput && !stdoutOutput.classList.contains('empty')) ? stdoutOutput.textContent : '';
+        vscode.postMessage({ command: 'copyOutput', text });
+      });
+    }
 
-    // Handle messages from VS Code extension
     window.addEventListener('message', event => {
       const msg = event.data;
       if (msg.command === 'updateScriptContext') {
-        if (msg.fileName) fileBadge.textContent = '📄 ' + msg.fileName;
+        if (msg.fileName && fileBadge) {
+          fileBadge.innerHTML = '<span class="codicon codicon-file-code"></span> ' + escapeHtmlClient(msg.fileName);
+        }
         if (msg.detected) {
           detectedInputs = msg.detected;
           initFieldsFromData();
         }
+        if (msg.activeTab && ioPanels) {
+          const targetId = msg.activeTab === 'raw' ? 'tab-raw' : 'tab-form';
+          ioPanels.setAttribute('activeid', targetId);
+          if (ioPanels.activeid !== undefined) ioPanels.activeid = targetId;
+        }
+      } else if (msg.command === 'setInput') {
+        if (rawTextarea) rawTextarea.value = msg.text || '';
+        syncFieldsFromRaw();
       } else if (msg.command === 'setRunning') {
-        runBtn.disabled = true;
-        statusBadge.textContent = 'Running...';
-        statusBadge.className = 'badge running';
-        timeBadge.textContent = '';
+        if (runBtn) runBtn.disabled = true;
+        if (statusBadge) statusBadge.textContent = 'Running...';
+        if (timeBadge) timeBadge.textContent = '';
       } else if (msg.command === 'setOutput') {
-        runBtn.disabled = false;
+        if (runBtn) runBtn.disabled = false;
         const text = msg.text || '';
-        stdoutOutput.textContent = text;
-        if (text.trim().length > 0) {
-          stdoutOutput.classList.remove('empty');
-        } else {
-          stdoutOutput.textContent = '(Program produced no output)';
+        if (stdoutOutput) {
+          stdoutOutput.textContent = text;
+          if (text.trim().length > 0) {
+            stdoutOutput.classList.remove('empty');
+          } else {
+            stdoutOutput.textContent = '(Program produced no output)';
+          }
         }
-        if (msg.status === 'error') {
-          statusBadge.textContent = 'Compilation Failed';
-          statusBadge.className = 'badge error';
-        } else {
-          statusBadge.textContent = 'Success';
-          statusBadge.className = 'badge success';
+        if (statusBadge) {
+          if (msg.status === 'error') {
+            statusBadge.textContent = 'Compilation Failed';
+          } else {
+            statusBadge.textContent = 'Success';
+          }
         }
-        if (msg.duration) {
+        if (msg.duration && timeBadge) {
           timeBadge.textContent = '⚡ ' + msg.duration + 's';
         }
       }
     });
 
-    // Initialize fields on load
     initFieldsFromData();
   </script>
 </body>
