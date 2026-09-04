@@ -3,7 +3,7 @@
   "displayName": "TurboVs",
   "description": "Run legacy Turbo C++ programs (iostream.h, conio.h, graphics.h) directly from VS Code using DOSBox / DOSBox-X.",
   "version": "1.0.0",
-  "publisher": "turbocpp-community",
+  "publisher": "beyondbday69",
   "engines": {
     "vscode": "^1.75.0"
   },
@@ -192,10 +192,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/turbocpp-community/turbovs.git"
+    "url": "https://github.com/beyondbday69/turbovs.git"
   },
   "bugs": {
-    "url": "https://github.com/turbocpp-community/turbovs/issues"
+    "url": "https://github.com/beyondbday69/turbovs/issues"
   },
-  "homepage": "https://github.com/turbocpp-community/turbovs#readme"
+  "homepage": "https://github.com/beyondbday69/turbovs#readme"
 }
