@@ -82,32 +82,50 @@ echo "[5/6] Launching code-server on port $PORT..."
 code-server --bind-addr "0.0.0.0:$PORT" --auth none --disable-telemetry "$WORKSPACE_DIR" > /tmp/code_server.log 2>&1 &
 sleep 2
 
-# 6. Start Cloudflare Tunnels (Zero-configuration public HTTPS access)
-echo "[6/6] Establishing Secure Public Tunnels..."
-rm -f /tmp/code_tunnel.log /tmp/vnc_tunnel.log
+# 6. Start Multi-Provider Public Tunnels (Cloudflare + Pinggy + Localhost.run)
+echo "[6/6] Establishing Multi-Provider Secure Public Tunnels..."
+rm -f /tmp/code_tunnel.log /tmp/vnc_tunnel.log /tmp/pinggy.log /tmp/lhr.log
 
+# 6a. Cloudflare Tunnel
 if command -v cloudflared >/dev/null 2>&1; then
     cloudflared tunnel --url "http://127.0.0.1:$PORT" > /tmp/code_tunnel.log 2>&1 &
     cloudflared tunnel --url "http://127.0.0.1:$VNC_PORT" > /tmp/vnc_tunnel.log 2>&1 &
 fi
 
+# 6b. Pinggy Tunnel (clean alternative domain *.pinggy.link)
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:localhost:$PORT a.pinggy.io > /tmp/pinggy.log 2>&1 &
+
+# 6c. Localhost.run Tunnel (clean alternative domain *.lhr.life)
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:$PORT nokey@localhost.run > /tmp/lhr.log 2>&1 &
+
 # Wait for tunnel URLs
 CODE_URL=""
+PINGGY_URL=""
+LHR_URL=""
 VNC_URL=""
 
 for i in {1..35}; do
-    if [ -f /tmp/code_tunnel.log ] && grep -q -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/code_tunnel.log; then
+    if [ -z "$CODE_URL" ] && [ -f /tmp/code_tunnel.log ] && grep -q -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/code_tunnel.log; then
         CODE_URL=$(grep -o -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/code_tunnel.log | head -n 1)
+    fi
+    if [ -z "$PINGGY_URL" ] && [ -f /tmp/pinggy.log ] && grep -q -E "https://[a-zA-Z0-9.-]+\.pinggy\.(link|net)" /tmp/pinggy.log; then
+        PINGGY_URL=$(grep -o -E "https://[a-zA-Z0-9.-]+\.pinggy\.(link|net)" /tmp/pinggy.log | head -n 1)
+    fi
+    if [ -z "$LHR_URL" ] && [ -f /tmp/lhr.log ] && grep -q -E "https://[a-zA-Z0-9.-]+\.lhr\.life" /tmp/lhr.log; then
+        LHR_URL=$(grep -o -E "https://[a-zA-Z0-9.-]+\.lhr\.life" /tmp/lhr.log | head -n 1)
+    fi
+    if [ -z "$VNC_URL" ] && [ -f /tmp/vnc_tunnel.log ] && grep -q -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/vnc_tunnel.log; then
+        VNC_URL=$(grep -o -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/vnc_tunnel.log | head -n 1 || true)
+    fi
+    if [ -n "$CODE_URL" ] && [ -n "$PINGGY_URL" ] && [ -n "$LHR_URL" ]; then
         break
     fi
     sleep 1
 done
 
-if [ -f /tmp/vnc_tunnel.log ]; then
-    VNC_URL=$(grep -o -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/vnc_tunnel.log | head -n 1 || true)
-fi
-
 echo "$CODE_URL" > /tmp/code_url.txt
+echo "$PINGGY_URL" > /tmp/pinggy_url.txt
+echo "$LHR_URL" > /tmp/lhr_url.txt
 echo "$VNC_URL" > /tmp/vnc_url.txt
 
 echo ""
@@ -115,15 +133,10 @@ echo "======================================================="
 echo "   TURBOVS CLOUD VS CODE SERVER IS READY!             "
 echo "======================================================="
 echo ""
-if [ -n "$CODE_URL" ]; then
-    echo "  🌐 VS Code Web Editor:  $CODE_URL"
-else
-    echo "  🌐 Local VS Code URL:   http://localhost:$PORT"
-fi
-
-if [ -n "$VNC_URL" ]; then
-    echo "  🖥️  DOSBox CRT Display:  $VNC_URL/vnc.html?autoconnect=true"
-fi
+[ -n "$CODE_URL" ] && echo "  🌐 Cloudflare Tunnel:    $CODE_URL/?folder=$WORKSPACE_DIR"
+[ -n "$PINGGY_URL" ] && echo "  🌐 Pinggy Tunnel:        $PINGGY_URL/?folder=$WORKSPACE_DIR"
+[ -n "$LHR_URL" ] && echo "  🌐 Localhost.run Tunnel: $LHR_URL/?folder=$WORKSPACE_DIR"
+[ -n "$VNC_URL" ] && echo "  🖥️  DOSBox CRT Display:   $VNC_URL/vnc.html?autoconnect=true"
 echo ""
 echo "  📁 Workspace Folder:    $WORKSPACE_DIR"
 echo "  ⚡ Turbo C++ Compiler:  $HOME/turboc3"
@@ -136,10 +149,12 @@ if [ -n "$GITHUB_STEP_SUMMARY" ]; then
     cat << MD_SUMMARY >> "$GITHUB_STEP_SUMMARY"
 ## 🚀 TurboVs Cloud VS Code Server is Online!
 
-You can test and run Turbo C++ programs directly in your browser:
+You can test and run Turbo C++ programs directly in your browser using any of the live mirror links below:
 
-### 🔗 Access Links:
-- **[👉 Open VS Code Web Editor]($CODE_URL)** — Full Visual Studio Code with the TurboVs extension pre-installed!
+### 🔗 Public Access Links (Try any that works best with your network/ISP):
+$([ -n "$PINGGY_URL" ] && echo "- **[👉 Open via Pinggy (Fastest & Unrestricted)]($PINGGY_URL/?folder=$WORKSPACE_DIR)**")
+$([ -n "$LHR_URL" ] && echo "- **[👉 Open via Localhost.run]($LHR_URL/?folder=$WORKSPACE_DIR)**")
+$([ -n "$CODE_URL" ] && echo "- **[👉 Open via Cloudflare]($CODE_URL/?folder=$WORKSPACE_DIR)**")
 $([ -n "$VNC_URL" ] && echo "- **[🖥️ Open DOSBox GUI Display]($VNC_URL/vnc.html?autoconnect=true)** — Live view of DOSBox CRT screen & graphics.")
 
 ### 📝 Pre-Loaded Examples in Workspace:
@@ -152,23 +167,25 @@ $([ -n "$VNC_URL" ] && echo "- **[🖥️ Open DOSBox GUI Display]($VNC_URL/vnc.
 - \`text_animation.cpp\` — Classic DOS text animation with \`gotoxy()\` and colors
 
 ### ⌨️ How to Run:
-1. Click on any file (e.g. \`hello.cpp\`).
+1. Click on any file (e.g. \`calculator.cpp\`).
 2. Press **\`Ctrl+F9\`** or click the **Play** button in the top right.
-3. The TurboVs integrated terminal will compile with genuine \`TCC.EXE\` and run!
+3. The TurboVs input UI will prompt for inputs automatically and run with pure output!
 MD_SUMMARY
 fi
 
 # Post URL to git branch live-url if in git repo with push credentials
-if [ -n "$GITHUB_TOKEN" ] && [ -n "$CODE_URL" ]; then
-    echo "Publishing live URL to GitHub branch live-url..."
+if [ -n "$GITHUB_TOKEN" ] && ([ -n "$CODE_URL" ] || [ -n "$PINGGY_URL" ] || [ -n "$LHR_URL" ]); then
+    echo "Publishing live URLs to GitHub branch live-url..."
     git config user.name "github-actions[bot]"
     git config user.email "github-actions[bot]@users.noreply.github.com"
     git checkout --orphan live-url 2>/dev/null || git checkout -B live-url
     git rm -rf . >/dev/null 2>&1 || true
     echo "$CODE_URL" > live_url.txt
+    echo "$PINGGY_URL" > live_pinggy_url.txt
+    echo "$LHR_URL" > live_lhr_url.txt
     echo "$VNC_URL" > live_vnc_url.txt
-    git add live_url.txt live_vnc_url.txt
-    git commit -m "chore: Update active VS Code Server URL [skip ci]" --allow-empty
+    git add live_url.txt live_pinggy_url.txt live_lhr_url.txt live_vnc_url.txt
+    git commit -m "chore: Update active VS Code Server URLs [skip ci]" --allow-empty
     git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live-url --force || true
     git checkout main 2>/dev/null || true
 fi
