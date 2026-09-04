@@ -42,5 +42,15 @@ else
     echo "Warning: Files copied, but one or more standard folders (BIN/INCLUDE/LIB) were not verified."
 fi
 
+# Configure TURBOC.CFG to guarantee standard paths
+if [ -d "$TARGET_DIR/BIN" ]; then
+    printf -- "-IC:\\\\INCLUDE\\r\\n-LC:\\\\LIB\\r\\n" > "$TARGET_DIR/BIN/TURBOC.CFG"
+    mkdir -p "$TARGET_DIR/TC"
+    ln -sf ../INCLUDE "$TARGET_DIR/TC/INCLUDE" 2>/dev/null || true
+    ln -sf ../LIB "$TARGET_DIR/TC/LIB" 2>/dev/null || true
+    ln -sf ../BIN "$TARGET_DIR/TC/BIN" 2>/dev/null || true
+    ln -sf ../BGI "$TARGET_DIR/TC/BGI" 2>/dev/null || true
+fi
+
 chmod -R u+rwX "$TARGET_DIR"
 echo "======================================================="

@@ -762,7 +762,8 @@ echo   Source File: ${originalFileName}
 echo =======================================================
 echo.
 echo [1/2] Compiling with Turbo C++ (TCC)...
-tcc ${memoryModelFlag} -IC:\\INCLUDE -LC:\\LIB ${targetDosFileName} > TC_ERR.LOG 2>&1
+tcc ${memoryModelFlag} -IC:\\INCLUDE -LC:\\LIB ${targetDosFileName} > TC_ERR.LOG
+type TC_ERR.LOG
 if errorlevel 1 goto compile_error
 echo.
 echo [2/2] Compilation Successful! Launching program...
@@ -778,7 +779,7 @@ echo =======================================================
 echo   COMPILATION FAILED!
 echo =======================================================
 echo.
-type TC_ERR.LOG
+if exist TC_ERR.LOG type TC_ERR.LOG
 echo.
 echo =======================================================
 echo   Press any key to close this window...
@@ -803,7 +804,10 @@ exit
     if (!terminal) {
         terminal = vscode.window.createTerminal({
             name: 'TurboVs',
-            iconPath: new vscode.ThemeIcon('terminal')
+            iconPath: new vscode.ThemeIcon('terminal'),
+            env: {
+                DISPLAY: process.env.DISPLAY || ':0'
+            }
         });
     }
 
@@ -823,6 +827,9 @@ exit
     let launchCmd = `"${env.dosbox.path}" -conf "${tempConfPath}"`;
     if (extraArgs) {
         launchCmd += ` ${extraArgs}`;
+    }
+    if (process.platform !== 'win32' && !process.env.DISPLAY) {
+        launchCmd = `DISPLAY=:0 ${launchCmd}`;
     }
 
     // 9. Update state & status bar
