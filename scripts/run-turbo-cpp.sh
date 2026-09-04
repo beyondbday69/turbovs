@@ -2,6 +2,7 @@
 set -e
 
 SOURCE_FILE="${1:-examples/hello.cpp}"
+INPUT_ARG="${2:-}"
 
 if [ ! -f "$SOURCE_FILE" ]; then
     echo "Error: Source file not found: $SOURCE_FILE"
@@ -12,10 +13,19 @@ SOURCE_ABS=$(cd "$(dirname "$SOURCE_FILE")" && pwd)/$(basename "$SOURCE_FILE")
 WORKSPACE_DIR=$(dirname "$SOURCE_ABS")
 FILE_NAME=$(basename "$SOURCE_ABS")
 BASE_NAME="${FILE_NAME%.*}"
-BASE_83=$(echo "$BASE_NAME" | tr '[:lower:]' '[:upper:]' | cut -c1-8)
-EXT_83=$(echo "${FILE_NAME##*.}" | tr '[:lower:]' '[:upper:]' | cut -c1-3)
-DOS_FILE="${BASE_83}.${EXT_83}"
-DOS_EXE="${BASE_83}.EXE"
+EXT_NAME="${FILE_NAME##*.}"
+EXT_UPPER=$(echo "$EXT_NAME" | tr '[:lower:]' '[:upper:]')
+
+IS_TEMP_ALIAS=0
+if [ ${#BASE_NAME} -le 8 ] && [[ "$BASE_NAME" =~ ^[A-Za-z0-9_]+$ ]]; then
+    DOS_FILE="$(echo "$BASE_NAME" | tr '[:lower:]' '[:upper:]').$EXT_UPPER"
+    DOS_EXE="$(echo "$BASE_NAME" | tr '[:lower:]' '[:upper:]').EXE"
+else
+    IS_TEMP_ALIAS=1
+    DOS_FILE="TC_RUN.$EXT_UPPER"
+    DOS_EXE="TC_RUN.EXE"
+    cp "$SOURCE_ABS" "$WORKSPACE_DIR/$DOS_FILE"
+fi
 
 # Locate compiler
 TC_DIR=""
@@ -41,12 +51,22 @@ fi
 # Temporary files
 CONF_FILE=$(mktemp /tmp/dosbox_run_XXXXXX.conf)
 OUT_LOG="$WORKSPACE_DIR/TC_OUT.LOG"
+BUILD_LOG="$WORKSPACE_DIR/TC_BUILD.LOG"
 IN_TXT="$WORKSPACE_DIR/TC_IN.TXT"
 
-rm -f "$OUT_LOG" "$WORKSPACE_DIR/$DOS_EXE" "$TC_DIR/BIN/$DOS_EXE"
+rm -f "$OUT_LOG" "$BUILD_LOG" "$WORKSPACE_DIR/$DOS_EXE" "$TC_DIR/BIN/$DOS_EXE"
 
-if [ ! -f "$IN_TXT" ]; then
-    printf "Alice\r\n\r\n" > "$IN_TXT"
+# Handle input (stdin)
+if [ -n "$INPUT_ARG" ]; then
+    if [ -f "$INPUT_ARG" ]; then
+        cp "$INPUT_ARG" "$IN_TXT"
+    else
+        printf "%s\r\n" "$INPUT_ARG" > "$IN_TXT"
+    fi
+elif [ -f "$WORKSPACE_DIR/input.txt" ]; then
+    cp "$WORKSPACE_DIR/input.txt" "$IN_TXT"
+elif [ ! -f "$IN_TXT" ]; then
+    printf "\r\n" > "$IN_TXT"
 fi
 
 cat << CONF > "$CONF_FILE"
@@ -83,31 +103,25 @@ mount c "$TC_DIR"
 mount d "$WORKSPACE_DIR"
 c:
 cd BIN
-TCC -IC:\INCLUDE -LC:\LIB -IC:\TC\INCLUDE -LC:\TC\LIB d:\\$DOS_FILE > d:\TC_OUT.LOG
+TCC -IC:\INCLUDE -LC:\LIB -IC:\TC\INCLUDE -LC:\TC\LIB d:\\$DOS_FILE > d:\TC_BUILD.LOG
 if errorlevel 1 goto error
-$DOS_EXE >> d:\TC_OUT.LOG < d:\TC_IN.TXT
+$DOS_EXE > d:\TC_OUT.LOG < d:\TC_IN.TXT
 goto done
 :error
-echo. >> d:\TC_OUT.LOG
-echo [TurboVs] Compilation failed! >> d:\TC_OUT.LOG
+echo [TurboVs] Compilation Failed! > d:\TC_OUT.LOG
+type d:\TC_BUILD.LOG >> d:\TC_OUT.LOG
 :done
 exit
 CONF
 
-echo "======================================================="
-echo "   TurboVs Headless Runner"
-echo "   Source: $SOURCE_FILE -> $DOS_FILE"
-echo "   Compiler: $TC_DIR/BIN/TCC.EXE"
-echo "======================================================="
-
-# Run under xvfb-run if available, with -exit flag
+# Run under xvfb-run if available, with -exit flag and all noise redirected to /dev/null
 if command -v xvfb-run >/dev/null 2>&1; then
-    SDL_AUDIODRIVER=dummy ALSA_CARD=none xvfb-run -a "$DOSBOX_BIN" -conf "$CONF_FILE" -exit 2>/dev/null || true
+    SDL_AUDIODRIVER=dummy ALSA_CARD=none xvfb-run -a "$DOSBOX_BIN" -conf "$CONF_FILE" -exit >/dev/null 2>&1 || true
 else
-    SDL_AUDIODRIVER=dummy ALSA_CARD=none "$DOSBOX_BIN" -conf "$CONF_FILE" -exit 2>/dev/null || true
+    SDL_AUDIODRIVER=dummy ALSA_CARD=none "$DOSBOX_BIN" -conf "$CONF_FILE" -exit >/dev/null 2>&1 || true
 fi
 
-# Print output to terminal
+# Print pure output to terminal
 if [ -f "$OUT_LOG" ]; then
     cat "$OUT_LOG"
     rm -f "$OUT_LOG"
@@ -116,6 +130,7 @@ else
 fi
 
 # Cleanup
-rm -f "$CONF_FILE" "$IN_TXT" "$TC_DIR/BIN/$DOS_EXE" 2>/dev/null || true
-echo ""
-echo "======================================================="
+rm -f "$CONF_FILE" "$BUILD_LOG" "$TC_DIR/BIN/$DOS_EXE" "$WORKSPACE_DIR/$DOS_EXE" 2>/dev/null || true
+if [ $IS_TEMP_ALIAS -eq 1 ]; then
+    rm -f "$WORKSPACE_DIR/$DOS_FILE" 2>/dev/null || true
+fi

@@ -107,3 +107,22 @@ console.log('\n--- ALL UNIT TESTS PASSED SUCCESSFULLY! (5/5) ---');
 console.log('[Test 6] Testing getSetting()...');
 assert.strictEqual(ext.getSetting('unknownKey', 'defaultVal'), 'defaultVal');
 console.log('  ✔ getSetting() fallback passed.');
+
+// Test 7: escapeHtml and getIoWebviewHtml
+console.log('[Test 7] Testing escapeHtml() and getIoWebviewHtml()...');
+assert.strictEqual(ext.escapeHtml('<script>alert(1)</script>'), '&lt;script&gt;alert(1)&lt;/script&gt;');
+assert.strictEqual(ext.escapeHtml('a & b "c" \'d\''), 'a &amp; b &quot;c&quot; &#039;d&#039;');
+const html = ext.getIoWebviewHtml('10\n20', 'Result: 30');
+assert(html.includes('TurboVs I/O'), 'Webview HTML must include TurboVs I/O title');
+assert(html.includes('stdinInput'), 'Webview HTML must include stdinInput textarea');
+assert(html.includes('stdoutOutput'), 'Webview HTML must include stdoutOutput');
+assert(html.includes('Result: 30'), 'Webview HTML must contain initial output');
+console.log('  ✔ getIoWebviewHtml() generated valid HTML.');
+
+// Test 8: openIoPanel creates panel
+console.log('[Test 8] Testing openIoPanel()...');
+const panel = ext.openIoPanel({});
+assert(panel && typeof panel.reveal === 'function', 'openIoPanel should return webview panel');
+console.log('  ✔ openIoPanel() returned valid panel.');
+
+console.log('\n--- ALL UNIT TESTS (8/8) PASSED SUCCESSFULLY! ---');

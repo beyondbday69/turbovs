@@ -5,6 +5,9 @@ node_modules/
 Thumbs.db
 *.log
 TC_ERR.LOG
+TC_OUT.LOG
+TC_BUILD.LOG
+TC_IN.TXT
 TC_RUN.*
 *.OBJ
 *.MAP

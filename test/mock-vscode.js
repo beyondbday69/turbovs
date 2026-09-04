@@ -9,7 +9,26 @@ const mockVscode = {
         showWarningMessage: async () => {},
         showErrorMessage: async () => {},
         showQuickPick: async () => null,
-        showOpenDialog: async () => null
+        showOpenDialog: async () => null,
+        showInputBox: async () => '',
+        createWebviewPanel: () => ({
+            webview: {
+                html: '',
+                postMessage: () => {},
+                onDidReceiveMessage: () => ({ dispose: () => {} })
+            },
+            reveal: () => {},
+            onDidDispose: () => ({ dispose: () => {} }),
+            dispose: () => {}
+        })
+    },
+    ViewColumn: { Beside: -2, One: 1, Two: 2 },
+    env: {
+        openExternal: async () => {},
+        clipboard: {
+            writeText: async () => {},
+            readText: async () => ''
+        }
     },
     workspace: {
         getConfiguration: () => ({

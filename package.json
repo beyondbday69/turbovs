@@ -33,7 +33,9 @@
     "onCommand:turbovs.stop",
     "onCommand:turbovs.openIde",
     "onCommand:turbovs.checkEnvironment",
-    "onCommand:turbovs.configure"
+    "onCommand:turbovs.configure",
+    "onCommand:turbovs.openIoPanel",
+    "onCommand:turbovs.setInput"
   ],
   "contributes": {
     "commands": [
@@ -41,6 +43,16 @@
         "command": "turbovs.run",
         "title": "TurboVs: Run Program",
         "icon": "$(play)"
+      },
+      {
+        "command": "turbovs.openIoPanel",
+        "title": "TurboVs: Open Input/Output Panel",
+        "icon": "$(terminal-view)"
+      },
+      {
+        "command": "turbovs.setInput",
+        "title": "TurboVs: Set Program Input",
+        "icon": "$(edit)"
       },
       {
         "command": "turbovs.stop",
@@ -71,8 +83,18 @@
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         },
         {
-          "command": "turbovs.stop",
+          "command": "turbovs.openIoPanel",
           "group": "navigation@2",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.setInput",
+          "group": "navigation@3",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.stop",
+          "group": "navigation@4",
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         }
       ],
@@ -80,6 +102,16 @@
         {
           "command": "turbovs.run",
           "group": "1_run",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.openIoPanel",
+          "group": "1_io",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.setInput",
+          "group": "1_io",
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         },
         {
@@ -91,6 +123,12 @@
       "commandPalette": [
         {
           "command": "turbovs.run"
+        },
+        {
+          "command": "turbovs.openIoPanel"
+        },
+        {
+          "command": "turbovs.setInput"
         },
         {
           "command": "turbovs.stop"
@@ -112,6 +150,18 @@
         "key": "ctrl+f9",
         "mac": "cmd+f9",
         "when": "editorTextFocus && (resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C)"
+      },
+      {
+        "command": "turbovs.openIoPanel",
+        "key": "ctrl+alt+i",
+        "mac": "cmd+alt+i",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "turbovs.setInput",
+        "key": "ctrl+alt+n",
+        "mac": "cmd+alt+n",
+        "when": "editorTextFocus"
       },
       {
         "command": "turbovs.stop",
@@ -182,6 +232,16 @@
             "huge (-mh)"
           ],
           "description": "Turbo C++ memory model flag passed to the TCC compiler."
+        },
+        "turbovs.defaultInput": {
+          "type": "string",
+          "default": "",
+          "description": "Default input text supplied to programs expecting stdin (cin >> / scanf) if no custom input is specified."
+        },
+        "turbovs.executionTimeout": {
+          "type": "integer",
+          "default": 15,
+          "description": "Maximum execution time in seconds before automatically stopping the DOSBox session (prevents infinite loops)."
         }
       }
     }

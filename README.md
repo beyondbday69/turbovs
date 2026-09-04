@@ -50,11 +50,22 @@ As shown in the screenshot above:
 
 | Command | Shortcut | Description |
 | :--- | :--- | :--- |
-| `TurboVs: Run Program` | `Ctrl+F9` (`Cmd+F9`) | Saves, compiles, and runs active file |
+| `TurboVs: Run Program` | `Ctrl+F9` (`Cmd+F9`) | Saves, compiles, and runs active file with clean stdout |
+| `TurboVs: Open Input/Output Panel` | `Ctrl+Alt+I` (`Cmd+Alt+I`) | Dedicated panel for stdin (`cin`/`scanf`) and output |
+| `TurboVs: Set Program Input` | `Ctrl+Alt+N` (`Cmd+Alt+N`) | Quick prompt to pre-supply stdin before running |
 | `TurboVs: Stop Program` | `Ctrl+Shift+F9` | Kills running DOSBox session |
 | `TurboVs: Open in Turbo C++ IDE` | Command Palette | Launches the classic blue Borland IDE |
 | `TurboVs: Check Environment Status` | Command Palette | Diagnoses DOSBox and compiler paths |
 | `TurboVs: Configure Settings` | Command Palette | Quick configuration wizard |
+
+## 💡 Dedicated Competitive-Programming Style Input / Output Panel
+
+No more waiting on unresponsive stdin or noisy compiler banners:
+- **Clean Output Only**: All DOSBox startup banners, Turbo C++ copyrights, Turbo Link messages, and "Available memory" are completely suppressed. The terminal and output panel show **only** your program's actual stdout/stderr.
+- **Dedicated I/O Panel (`Ctrl+Alt+I`)**: Enter your inputs before clicking **Run Program** (Codeforces / HackerEarth style).
+- **Multiple Inputs for `cin >>` / `scanf`**: Enter multiple values (one per line). They are piped directly into the program via `TC_IN.TXT`.
+- **Automatic `input.txt` Support**: If you place an `input.txt` in your project directory, TurboVs automatically uses it.
+
 
 ## ☁️ Test TurboVs in Your Browser (No Local Setup Required!)
 

@@ -11,6 +11,10 @@ let statusBarItem;
 let diagnosticCollection;
 let isProgramRunning = false;
 let activeTempFiles = [];
+let ioWebviewPanel = null;
+let currentCustomInput = '';
+let lastProgramOutput = '';
+let executionStartTime = 0;
 
 /**
  * Helper to get configuration with turbovs primary and turboCpp fallback
@@ -60,6 +64,8 @@ function activate(context) {
     const checkEnvCmd = vscode.commands.registerCommand('turbovs.checkEnvironment', () => checkEnvironment());
     const configureCmd = vscode.commands.registerCommand('turbovs.configure', () => configureSettings());
     const quickMenuCmd = vscode.commands.registerCommand('turbovs.quickMenu', () => showQuickMenu(context));
+    const openIoPanelCmd = vscode.commands.registerCommand('turbovs.openIoPanel', () => openIoPanel(context));
+    const setInputCmd = vscode.commands.registerCommand('turbovs.setInput', () => setInputPrompt(context));
 
     // Backward compatibility aliases
     const legacyRunCmd = vscode.commands.registerCommand('turboCpp.run', () => runTurboCpp(context));
@@ -70,6 +76,7 @@ function activate(context) {
 
     context.subscriptions.push(
         runCmd, stopCmd, openIdeCmd, checkEnvCmd, configureCmd, quickMenuCmd,
+        openIoPanelCmd, setInputCmd,
         legacyRunCmd, legacyStopCmd, legacyOpenIdeCmd, legacyCheckEnvCmd, legacyConfigureCmd
     );
 
@@ -110,8 +117,18 @@ async function showQuickMenu(context) {
     const items = [
         {
             label: '$(play) Run Current Program',
-            description: 'Compile and run the active C/C++ file in DOSBox',
+            description: 'Compile and run the active C/C++ file in DOSBox (Ctrl+F9)',
             action: 'run'
+        },
+        {
+            label: '$(terminal-view) Open Input / Output Panel',
+            description: 'Dedicated competitive programming panel for stdin and clean stdout',
+            action: 'ioPanel'
+        },
+        {
+            label: '$(edit) Set Program Input (stdin)',
+            description: 'Enter input values for cin >> or scanf before running',
+            action: 'setInput'
         },
         {
             label: '$(window) Open Turbo C++ IDE',
@@ -146,6 +163,12 @@ async function showQuickMenu(context) {
     switch (selection.action) {
         case 'run':
             vscode.commands.executeCommand('turbovs.run');
+            break;
+        case 'ioPanel':
+            vscode.commands.executeCommand('turbovs.openIoPanel');
+            break;
+        case 'setInput':
+            vscode.commands.executeCommand('turbovs.setInput');
             break;
         case 'ide':
             vscode.commands.executeCommand('turbovs.openIde');
@@ -591,6 +614,473 @@ function isDos83Name(fileName) {
 }
 
 /**
+ * Escape HTML special characters
+ */
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/**
+ * Syncs input text to TC_IN.TXT in current workspace directory
+ */
+function syncInputToDisk(text) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return;
+    try {
+        let workspaceHostDir = (getSetting('workspacePath', '') || '').trim();
+        if (workspaceHostDir) {
+            workspaceHostDir = expandHomeDir(workspaceHostDir);
+        } else {
+            workspaceHostDir = path.dirname(editor.document.fileName);
+        }
+        if (fs.existsSync(workspaceHostDir)) {
+            const hostInTxt = path.join(workspaceHostDir, 'TC_IN.TXT');
+            const dosContent = text ? text.replace(/\r?\n/g, '\r\n') + '\r\n' : '\r\n';
+            fs.writeFileSync(hostInTxt, dosContent, 'utf8');
+        }
+    } catch (_) {}
+}
+
+/**
+ * Command: Open Dedicated Input / Output Webview Panel
+ * @param {vscode.ExtensionContext} context
+ */
+function openIoPanel(context) {
+    if (ioWebviewPanel) {
+        ioWebviewPanel.reveal(vscode.ViewColumn.Beside);
+        return ioWebviewPanel;
+    }
+
+    ioWebviewPanel = vscode.window.createWebviewPanel(
+        'turbovsIoPanel',
+        'TurboVs: Input / Output',
+        vscode.ViewColumn.Beside,
+        {
+            enableScripts: true,
+            retainContextWhenHidden: true
+        }
+    );
+
+    // If currentCustomInput is not yet set, inspect active workspace for TC_IN.TXT or input.txt
+    const editor = vscode.window.activeTextEditor;
+    if (!currentCustomInput && editor) {
+        const dir = path.dirname(editor.document.fileName);
+        const inTxt = path.join(dir, 'TC_IN.TXT');
+        const inputTxt = path.join(dir, 'input.txt');
+        if (fs.existsSync(inTxt)) {
+            try {
+                const val = fs.readFileSync(inTxt, 'utf8').trim();
+                if (val) currentCustomInput = val;
+            } catch (_) {}
+        } else if (fs.existsSync(inputTxt)) {
+            try {
+                const val = fs.readFileSync(inputTxt, 'utf8').trim();
+                if (val) currentCustomInput = val;
+            } catch (_) {}
+        }
+    }
+
+    ioWebviewPanel.webview.html = getIoWebviewHtml(currentCustomInput, lastProgramOutput);
+
+    ioWebviewPanel.webview.onDidReceiveMessage(async message => {
+        switch (message.command) {
+            case 'run':
+                vscode.commands.executeCommand('turbovs.run');
+                break;
+            case 'updateInput':
+                currentCustomInput = message.text || '';
+                syncInputToDisk(currentCustomInput);
+                break;
+            case 'clearInput':
+                currentCustomInput = '';
+                syncInputToDisk('');
+                break;
+            case 'clearOutput':
+                lastProgramOutput = '';
+                break;
+            case 'copyOutput':
+                if (message.text) {
+                    await vscode.env.clipboard.writeText(message.text);
+                    vscode.window.showInformationMessage('TurboVs: Output copied to clipboard.');
+                }
+                break;
+        }
+    });
+
+    ioWebviewPanel.onDidDispose(() => {
+        ioWebviewPanel = null;
+    });
+
+    return ioWebviewPanel;
+}
+
+/**
+ * Command: Set Program Input (stdin) via quick input box
+ * @param {vscode.ExtensionContext} context
+ */
+async function setInputPrompt(context) {
+    const editor = vscode.window.activeTextEditor;
+    let initialVal = currentCustomInput;
+    if (!initialVal && editor) {
+        const dir = path.dirname(editor.document.fileName);
+        const inTxt = path.join(dir, 'TC_IN.TXT');
+        const inputTxt = path.join(dir, 'input.txt');
+        if (fs.existsSync(inTxt)) {
+            try { initialVal = fs.readFileSync(inTxt, 'utf8').trim(); } catch (_) {}
+        } else if (fs.existsSync(inputTxt)) {
+            try { initialVal = fs.readFileSync(inputTxt, 'utf8').trim(); } catch (_) {}
+        }
+    }
+
+    const input = await vscode.window.showInputBox({
+        title: 'TurboVs: Set Program Input (stdin)',
+        prompt: 'Enter inputs for cin >> or scanf (use \\n to separate lines for multiple prompts)',
+        value: initialVal ? initialVal.replace(/\r?\n/g, '\\n') : '',
+        placeHolder: 'e.g. 10\\n+\\n5'
+    });
+
+    if (input !== undefined) {
+        const normalized = input.replace(/\\n/g, '\n');
+        currentCustomInput = normalized;
+        syncInputToDisk(normalized);
+
+        if (ioWebviewPanel) {
+            ioWebviewPanel.webview.postMessage({ command: 'setInput', text: normalized });
+        }
+
+        const choice = await vscode.window.showInformationMessage(
+            'TurboVs: Program input saved. It will be piped on next run.',
+            'Open I/O Panel',
+            'Run Program'
+        );
+        if (choice === 'Open I/O Panel') {
+            openIoPanel(context);
+        } else if (choice === 'Run Program') {
+            vscode.commands.executeCommand('turbovs.run');
+        }
+    }
+}
+
+/**
+ * Generate HTML for the I/O webview panel
+ */
+function getIoWebviewHtml(initialInput, initialOutput) {
+    const escapedInput = escapeHtml(initialInput || '');
+    const hasOutput = initialOutput && initialOutput.trim().length > 0;
+    const escapedOutput = hasOutput ? escapeHtml(initialOutput) : 'Program output will appear here after execution...';
+    const outputClass = hasOutput ? 'output-box' : 'output-box empty';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TurboVs I/O</title>
+<style>
+  :root {
+    --bg-color: var(--vscode-editor-background, #1e1e1e);
+    --fg-color: var(--vscode-editor-foreground, #d4d4d4);
+    --input-bg: var(--vscode-input-background, #252526);
+    --input-fg: var(--vscode-input-foreground, #cccccc);
+    --input-border: var(--vscode-input-border, #3c3c3c);
+    --btn-bg: var(--vscode-button-background, #0e639c);
+    --btn-fg: var(--vscode-button-foreground, #ffffff);
+    --btn-hover: var(--vscode-button-hoverBackground, #1177bb);
+    --btn-sec-bg: var(--vscode-button-secondaryBackground, #3a3d41);
+    --btn-sec-fg: var(--vscode-button-secondaryForeground, #ffffff);
+    --btn-sec-hover: var(--vscode-button-secondaryHoverBackground, #45494e);
+    --border-color: var(--vscode-panel-border, #333333);
+    --badge-bg: var(--vscode-badge-background, #4d4d4d);
+    --badge-fg: var(--vscode-badge-foreground, #ffffff);
+    --font-mono: var(--vscode-editor-font-family, 'Courier New', Courier, monospace);
+    --font-sans: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  }
+  body {
+    background-color: var(--bg-color);
+    color: var(--fg-color);
+    font-family: var(--font-sans);
+    margin: 0;
+    padding: 14px 16px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 12px;
+    flex-shrink: 0;
+  }
+  .title-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background: var(--badge-bg);
+    color: var(--badge-fg);
+    font-weight: 500;
+  }
+  .badge.running {
+    background: #e5a50a;
+    color: #111;
+  }
+  .badge.success {
+    background: #2ea043;
+    color: #fff;
+  }
+  .badge.error {
+    background: #f85149;
+    color: #fff;
+  }
+  .actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  button {
+    background-color: var(--btn-bg);
+    color: var(--btn-fg);
+    border: none;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 3px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  button:hover {
+    background-color: var(--btn-hover);
+  }
+  button.secondary {
+    background-color: var(--btn-sec-bg);
+    color: var(--btn-sec-fg);
+  }
+  button.secondary:hover {
+    background-color: var(--btn-sec-hover);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .panels-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    min-height: 0;
+  }
+  .section {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+  }
+  .section-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-color);
+    opacity: 0.9;
+  }
+  .section-subtitle {
+    font-size: 11px;
+    opacity: 0.6;
+  }
+  textarea {
+    flex: 1;
+    width: 100%;
+    background-color: var(--input-bg);
+    color: var(--input-fg);
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    padding: 10px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.4;
+    resize: none;
+    box-sizing: border-box;
+    outline: none;
+  }
+  textarea:focus {
+    border-color: var(--btn-bg);
+  }
+  .output-box {
+    flex: 1;
+    width: 100%;
+    background-color: var(--input-bg);
+    color: var(--input-fg);
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    padding: 10px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-y: auto;
+    box-sizing: border-box;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+  .output-box.empty {
+    opacity: 0.5;
+    font-style: italic;
+  }
+  .time-badge {
+    font-size: 11px;
+    opacity: 0.7;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="title-group">
+      <span class="title">TurboVs I/O</span>
+      <span id="statusBadge" class="badge">Ready</span>
+      <span id="timeBadge" class="time-badge"></span>
+    </div>
+    <div class="actions">
+      <button id="runBtn" title="Run Current Program (Ctrl+F9)">▶ Run Program</button>
+      <button id="clearInputBtn" class="secondary" title="Clear stdin input">Clear Input</button>
+      <button id="clearOutputBtn" class="secondary" title="Clear stdout output">Clear Output</button>
+    </div>
+  </div>
+
+  <div class="panels-container">
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Input (stdin)</span>
+        <span class="section-subtitle">Values piped to cin / scanf (one per line)</span>
+      </div>
+      <textarea id="stdinInput" placeholder="Enter input values here (one per line).&#10;Example:&#10;Alice&#10;25">${escapedInput}</textarea>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Output (stdout)</span>
+        <button id="copyBtn" class="secondary" style="padding: 2px 8px; font-size: 11px;">Copy Output</button>
+      </div>
+      <div id="stdoutOutput" class="${outputClass}">${escapedOutput}</div>
+    </div>
+  </div>
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    const stdinInput = document.getElementById('stdinInput');
+    const stdoutOutput = document.getElementById('stdoutOutput');
+    const statusBadge = document.getElementById('statusBadge');
+    const timeBadge = document.getElementById('timeBadge');
+    const runBtn = document.getElementById('runBtn');
+    const clearInputBtn = document.getElementById('clearInputBtn');
+    const clearOutputBtn = document.getElementById('clearOutputBtn');
+    const copyBtn = document.getElementById('copyBtn');
+
+    // Handle Tab key in textarea
+    stdinInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = stdinInput.selectionStart;
+        const end = stdinInput.selectionEnd;
+        stdinInput.value = stdinInput.value.substring(0, start) + '    ' + stdinInput.value.substring(end);
+        stdinInput.selectionStart = stdinInput.selectionEnd = start + 4;
+        vscode.postMessage({ command: 'updateInput', text: stdinInput.value });
+      }
+    });
+
+    // Notify extension when input changes
+    stdinInput.addEventListener('input', () => {
+      vscode.postMessage({ command: 'updateInput', text: stdinInput.value });
+    });
+
+    runBtn.addEventListener('click', () => {
+      vscode.postMessage({ command: 'run' });
+    });
+
+    clearInputBtn.addEventListener('click', () => {
+      stdinInput.value = '';
+      vscode.postMessage({ command: 'clearInput' });
+    });
+
+    clearOutputBtn.addEventListener('click', () => {
+      stdoutOutput.textContent = 'Program output will appear here after execution...';
+      stdoutOutput.classList.add('empty');
+      statusBadge.textContent = 'Ready';
+      statusBadge.className = 'badge';
+      timeBadge.textContent = '';
+      vscode.postMessage({ command: 'clearOutput' });
+    });
+
+    copyBtn.addEventListener('click', () => {
+      const text = stdoutOutput.classList.contains('empty') ? '' : stdoutOutput.textContent;
+      vscode.postMessage({ command: 'copyOutput', text });
+    });
+
+    // Handle incoming messages from extension
+    window.addEventListener('message', event => {
+      const msg = event.data;
+      if (msg.command === 'setInput') {
+        stdinInput.value = msg.text || '';
+      } else if (msg.command === 'setRunning') {
+        runBtn.disabled = true;
+        statusBadge.textContent = 'Running...';
+        statusBadge.className = 'badge running';
+        timeBadge.textContent = '';
+      } else if (msg.command === 'setOutput') {
+        runBtn.disabled = false;
+        const text = msg.text || '';
+        stdoutOutput.textContent = text;
+        if (text.trim().length > 0) {
+          stdoutOutput.classList.remove('empty');
+        } else {
+          stdoutOutput.textContent = '(Program produced no output)';
+        }
+        if (msg.status === 'error') {
+          statusBadge.textContent = 'Compilation Failed';
+          statusBadge.className = 'badge error';
+        } else {
+          statusBadge.textContent = 'Success';
+          statusBadge.className = 'badge success';
+        }
+        if (msg.duration) {
+          timeBadge.textContent = '⚡ ' + msg.duration + 's';
+        }
+      }
+    });
+  </script>
+</body>
+</html>`;
+}
+
+/**
  * Main command: Run active C/C++ program in Turbo C++ via DOSBox
  * @param {vscode.ExtensionContext} context
  */
@@ -703,15 +1193,48 @@ async function runTurboCpp(context) {
     const compilerMount = formatMountPath(env.compiler.rootPath);
     const workspaceMount = formatMountPath(workspaceHostDir);
 
+    executionStartTime = Date.now();
+
+    // Determine input to pass to stdin
+    let inputVal = currentCustomInput;
+    if (!inputVal) {
+        const candidateIn = path.join(workspaceHostDir, 'TC_IN.TXT');
+        const candidateInput = path.join(workspaceHostDir, 'input.txt');
+        if (fs.existsSync(candidateIn)) {
+            try {
+                const text = fs.readFileSync(candidateIn, 'utf8').trim();
+                if (text) inputVal = text;
+            } catch (_) {}
+        }
+        if (!inputVal && fs.existsSync(candidateInput)) {
+            try {
+                const text = fs.readFileSync(candidateInput, 'utf8').trim();
+                if (text) inputVal = text;
+            } catch (_) {}
+        }
+        if (!inputVal) {
+            inputVal = getSetting('defaultInput', '');
+        }
+    }
+
     const hostInTxt = path.join(workspaceHostDir, 'TC_IN.TXT');
     const hostOutLog = path.join(workspaceHostDir, 'TC_OUT.LOG');
+    const hostBuildLog = path.join(workspaceHostDir, 'TC_BUILD.LOG');
     try {
-        if (!fs.existsSync(hostInTxt)) {
-            fs.writeFileSync(hostInTxt, '\r\n\r\n\r\n', 'utf8');
-            activeTempFiles.push(hostInTxt);
-        }
+        const dosInput = (inputVal || '').replace(/\r?\n/g, '\r\n') + '\r\n';
+        fs.writeFileSync(hostInTxt, dosInput, 'utf8');
+        activeTempFiles.push(hostInTxt);
         if (fs.existsSync(hostOutLog)) fs.unlinkSync(hostOutLog);
+        if (fs.existsSync(hostBuildLog)) fs.unlinkSync(hostBuildLog);
     } catch (_) {}
+
+    if (ioWebviewPanel) {
+        ioWebviewPanel.webview.postMessage({
+            command: 'setRunning',
+            running: true,
+            fileName: originalFileName
+        });
+    }
 
     const confContent = `
 [sdl]
@@ -754,13 +1277,13 @@ mount c "${compilerMount}"
 mount d "${workspaceMount}"
 c:
 cd BIN
-TCC -IC:\\INCLUDE -LC:\\LIB -IC:\\TC\\INCLUDE -LC:\\TC\\LIB ${memoryModelFlag} D:\\${targetDosFileName} > D:\\TC_OUT.LOG
+TCC -IC:\\INCLUDE -LC:\\LIB -IC:\\TC\\INCLUDE -LC:\\TC\\LIB ${memoryModelFlag} D:\\${targetDosFileName} > D:\\TC_BUILD.LOG
 if errorlevel 1 goto error
-${targetDosBase}.EXE >> D:\\TC_OUT.LOG < D:\\TC_IN.TXT
+${targetDosBase}.EXE > D:\\TC_OUT.LOG < D:\\TC_IN.TXT
 goto done
 :error
-echo. >> D:\\TC_OUT.LOG
-echo [TurboVs] Compilation failed! >> D:\\TC_OUT.LOG
+echo [TurboVs] Compilation Failed! > D:\\TC_OUT.LOG
+type D:\\TC_BUILD.LOG >> D:\\TC_OUT.LOG
 :done
 exit
 `.trim();
@@ -794,10 +1317,7 @@ exit
 
     terminal.show(true);
 
-    // Terminal header info
-    terminal.sendText(`echo "[TurboVs] Compiling & Running: ${originalFileName}"`);
-
-    // 8. Build launch command line with xvfb-run, -exit flag, and output print
+    // 8. Build launch command line with all DOSBox banners silenced (> /dev/null 2>&1)
     const extraArgs = (getSetting('dosboxArgs', '') || '').trim();
     let dosboxExec = `"${env.dosbox.path}" -conf "${tempConfPath}" -exit`;
     if (extraArgs) {
@@ -806,11 +1326,11 @@ exit
 
     let launchCmd = '';
     if (process.platform === 'win32') {
-        launchCmd = `${dosboxExec} 2>nul & if exist "${hostOutLog}" type "${hostOutLog}"`;
+        launchCmd = `${dosboxExec} >nul 2>&1 & if exist "${hostOutLog}" type "${hostOutLog}"`;
     } else {
         const hasXvfb = cp.spawnSync('which', ['xvfb-run']).status === 0;
         const prefix = hasXvfb ? 'xvfb-run -a ' : '';
-        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none ${prefix}${dosboxExec} 2>/dev/null; if [ -f "${hostOutLog}" ]; then cat "${hostOutLog}"; fi`;
+        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none ${prefix}${dosboxExec} >/dev/null 2>&1; if [ -f "${hostOutLog}" ]; then cat "${hostOutLog}"; fi`;
     }
 
     // 9. Update state & status bar
@@ -825,14 +1345,13 @@ exit
 }
 
 /**
- * Periodically monitor error log to report diagnostics to VS Code
+ * Periodically monitor error log to report diagnostics and output to VS Code
  */
 function monitorCompilation(workspaceDir, document, compiledName, context) {
-    const logFile = fs.existsSync(path.join(workspaceDir, 'TC_OUT.LOG'))
-        ? path.join(workspaceDir, 'TC_OUT.LOG')
-        : path.join(workspaceDir, 'TC_ERR.LOG');
+    const logFile = path.join(workspaceDir, 'TC_OUT.LOG');
     let attempts = 0;
-    const maxAttempts = 25; // 25 * 300ms = 7.5 seconds
+    const timeoutSec = getSetting('executionTimeout', 15);
+    const maxAttempts = Math.ceil((timeoutSec * 1000) / 300);
     let handled = false;
 
     const timer = setInterval(() => {
@@ -844,6 +1363,21 @@ function monitorCompilation(workspaceDir, document, compiledName, context) {
                 if (content.length > 0) {
                     clearInterval(timer);
                     handled = true;
+                    const elapsedMs = Date.now() - executionStartTime;
+                    const elapsedSec = (elapsedMs / 1000).toFixed(2);
+                    lastProgramOutput = content;
+                    const isError = content.includes('[TurboVs] Compilation Failed!');
+
+                    if (ioWebviewPanel) {
+                        ioWebviewPanel.webview.postMessage({
+                            command: 'setOutput',
+                            text: content,
+                            status: isError ? 'error' : 'success',
+                            duration: elapsedSec,
+                            fileName: compiledName
+                        });
+                    }
+
                     parseCompilerOutput(content, document, compiledName);
                     return;
                 }
@@ -854,6 +1388,15 @@ function monitorCompilation(workspaceDir, document, compiledName, context) {
             clearInterval(timer);
             if (!handled) {
                 diagnosticCollection.set(document.uri, []);
+                if (ioWebviewPanel) {
+                    ioWebviewPanel.webview.postMessage({
+                        command: 'setOutput',
+                        text: `[TurboVs] Execution timed out after ${timeoutSec} seconds. (Infinite loop or waiting for input?)`,
+                        status: 'error',
+                        duration: `${timeoutSec}.00`,
+                        fileName: compiledName
+                    });
+                }
             }
             isProgramRunning = false;
             updateStatusBar();
@@ -1080,5 +1623,9 @@ module.exports = {
     isDos83Name,
     formatMountPath,
     parseCompilerOutput,
-    getSetting
+    getSetting,
+    openIoPanel,
+    setInputPrompt,
+    getIoWebviewHtml,
+    escapeHtml
 };
