@@ -703,49 +703,26 @@ async function runTurboCpp(context) {
     const compilerMount = formatMountPath(env.compiler.rootPath);
     const workspaceMount = formatMountPath(workspaceHostDir);
 
-    const exitCommands = closeOnExit
-        ? [
-            'echo.',
-            'echo =======================================================',
-            'echo   Execution finished. Press any key to exit DOSBox...',
-            'echo =======================================================',
-            'pause > nul',
-            'exit'
-          ]
-        : [
-            'echo.',
-            'echo =======================================================',
-            'echo   Execution finished. DOS prompt is active.',
-            'echo =======================================================',
-            'd:'
-          ];
+    const hostInTxt = path.join(workspaceHostDir, 'TC_IN.TXT');
+    const hostOutLog = path.join(workspaceHostDir, 'TC_OUT.LOG');
+    try {
+        if (!fs.existsSync(hostInTxt)) {
+            fs.writeFileSync(hostInTxt, '\r\n\r\n\r\n', 'utf8');
+            activeTempFiles.push(hostInTxt);
+        }
+        if (fs.existsSync(hostOutLog)) fs.unlinkSync(hostOutLog);
+    } catch (_) {}
 
     const confContent = `
 [sdl]
-fullscreen=${isFullscreen}
+fullscreen=false
 fulldouble=false
 windowresolution=${resolution}
 output=surface
 autolock=true
-sensitivity=100
-waitonerror=true
-priority=higher,normal
-
-[dosbox]
-captures=capture
-memsize=16
-
-[render]
-aspect=false
-scaler=normal2x
-
-[cpu]
-core=auto
-cputype=auto
-cycles=max
 
 [mixer]
-nosound=${disableAudio}
+nosound=true
 
 [midi]
 mpu401=none
@@ -762,6 +739,10 @@ pcspeaker=false
 tandy=off
 disney=false
 
+[cpu]
+core=auto
+cycles=max
+
 [dos]
 xms=true
 ems=true
@@ -772,41 +753,16 @@ umb=true
 mount c "${compilerMount}"
 mount d "${workspaceMount}"
 c:
-set PATH=C:\\BIN;%PATH%
-d:
-cls
-echo =======================================================
-echo   TurboVs (Turbo C++ Runner) for VS Code
-echo   Source File: ${originalFileName}
-echo =======================================================
-echo.
-echo [1/2] Compiling with Turbo C++ (TCC)...
-tcc ${memoryModelFlag} -IC:\\INCLUDE -LC:\\LIB ${targetDosFileName} > TC_ERR.LOG
-type TC_ERR.LOG
-if errorlevel 1 goto compile_error
-echo.
-echo [2/2] Compilation Successful! Launching program...
-echo =======================================================
-echo.
-${targetDosExe}
-${exitCommands.join('\r\n')}
-goto finish
-
-:compile_error
-echo.
-echo =======================================================
-echo   COMPILATION FAILED!
-echo =======================================================
-echo.
-if exist TC_ERR.LOG type TC_ERR.LOG
-echo.
-echo =======================================================
-echo   Press any key to close this window...
-echo =======================================================
-pause > nul
+cd BIN
+TCC -IC:\\INCLUDE -LC:\\LIB -IC:\\TC\\INCLUDE -LC:\\TC\\LIB ${memoryModelFlag} D:\\${targetDosFileName} > D:\\TC_OUT.LOG
+if errorlevel 1 goto error
+${targetDosBase}.EXE >> D:\\TC_OUT.LOG < D:\\TC_IN.TXT
+goto done
+:error
+echo. >> D:\\TC_OUT.LOG
+echo [TurboVs] Compilation failed! >> D:\\TC_OUT.LOG
+:done
 exit
-
-:finish
 `.trim();
 
     const tempConfPath = path.join(os.tmpdir(), `dosbox_turbovs_${Date.now()}.conf`);
@@ -839,22 +795,22 @@ exit
     terminal.show(true);
 
     // Terminal header info
-    terminal.sendText(`echo "[TurboVs] Compiling and Running: ${originalFileName}"`);
-    terminal.sendText(`echo "[TurboVs] Compiler Directory:    ${env.compiler.rootPath}"`);
-    terminal.sendText(`echo "[TurboVs] DOSBox Executable:     ${env.dosbox.path}"`);
+    terminal.sendText(`echo "[TurboVs] Compiling & Running: ${originalFileName}"`);
 
-    // 8. Build launch command line
+    // 8. Build launch command line with xvfb-run, -exit flag, and output print
     const extraArgs = (getSetting('dosboxArgs', '') || '').trim();
-    let launchCmd = `"${env.dosbox.path}" -conf "${tempConfPath}"`;
+    let dosboxExec = `"${env.dosbox.path}" -conf "${tempConfPath}" -exit`;
     if (extraArgs) {
-        launchCmd += ` ${extraArgs}`;
+        dosboxExec += ` ${extraArgs}`;
     }
 
+    let launchCmd = '';
     if (process.platform === 'win32') {
-        launchCmd = `${launchCmd} 2>nul`;
+        launchCmd = `${dosboxExec} 2>nul & if exist "${hostOutLog}" type "${hostOutLog}"`;
     } else {
-        const displayEnv = process.env.DISPLAY || ':0';
-        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none DISPLAY="${displayEnv}" ${launchCmd} 2>/dev/null`;
+        const hasXvfb = cp.spawnSync('which', ['xvfb-run']).status === 0;
+        const prefix = hasXvfb ? 'xvfb-run -a ' : '';
+        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none ${prefix}${dosboxExec} 2>/dev/null; if [ -f "${hostOutLog}" ]; then cat "${hostOutLog}"; fi`;
     }
 
     // 9. Update state & status bar
@@ -872,7 +828,9 @@ exit
  * Periodically monitor error log to report diagnostics to VS Code
  */
 function monitorCompilation(workspaceDir, document, compiledName, context) {
-    const logFile = path.join(workspaceDir, 'TC_ERR.LOG');
+    const logFile = fs.existsSync(path.join(workspaceDir, 'TC_OUT.LOG'))
+        ? path.join(workspaceDir, 'TC_OUT.LOG')
+        : path.join(workspaceDir, 'TC_ERR.LOG');
     let attempts = 0;
     const maxAttempts = 25; // 25 * 300ms = 7.5 seconds
     let handled = false;
