@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 set -e
 
-WORKSPACE_DIR="${1:-$(pwd)/examples}"
+MODE="${1:---daemon}"
+WORKSPACE_DIR="${2:-$(pwd)/examples}"
 PORT="${PORT:-8080}"
 VNC_PORT="${VNC_PORT:-6080}"
 
 echo "======================================================="
 echo "   TurboVs Cloud VS Code Server Launcher              "
-echo "   Workspace: $WORKSPACE_DIR"
+echo "   Mode: $MODE | Workspace: $WORKSPACE_DIR"
 echo "======================================================="
 
 # 1. Start Virtual X11 Display
 echo "[1/6] Starting Virtual Display (Xvfb :0)..."
 if ! pgrep -x "Xvfb" >/dev/null; then
-    Xvfb :0 -screen 0 1280x800x24 &
+    Xvfb :0 -screen 0 1280x800x24 >/dev/null 2>&1 &
     sleep 1
 fi
 export DISPLAY=:0
@@ -21,9 +22,7 @@ export DISPLAY=:0
 # 2. Start Window Manager & VNC Server
 echo "[2/6] Starting Window Manager & VNC Screen (Port $VNC_PORT)..."
 if command -v openbox >/dev/null 2>&1; then
-    openbox &
-elif command -v fluxbox >/dev/null 2>&1; then
-    fluxbox &
+    openbox >/dev/null 2>&1 &
 fi
 
 if command -v x11vnc >/dev/null 2>&1; then
@@ -75,8 +74,13 @@ if [ -n "$VSIX_FILE" ] && command -v code-server >/dev/null 2>&1; then
     code-server --install-extension "$VSIX_FILE" --force || true
 fi
 
-# 5. Start Cloudflare Tunnels (Zero-configuration public HTTPS access)
-echo "[5/6] Establishing Secure Public Tunnels..."
+# 5. Launch code-server in background
+echo "[5/6] Launching code-server on port $PORT..."
+code-server --bind-addr "0.0.0.0:$PORT" --auth none --disable-telemetry "$WORKSPACE_DIR" > /tmp/code_server.log 2>&1 &
+sleep 2
+
+# 6. Start Cloudflare Tunnels (Zero-configuration public HTTPS access)
+echo "[6/6] Establishing Secure Public Tunnels..."
 rm -f /tmp/code_tunnel.log /tmp/vnc_tunnel.log
 
 if command -v cloudflared >/dev/null 2>&1; then
@@ -88,7 +92,7 @@ fi
 CODE_URL=""
 VNC_URL=""
 
-for i in {1..30}; do
+for i in {1..35}; do
     if [ -f /tmp/code_tunnel.log ] && grep -q -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/code_tunnel.log; then
         CODE_URL=$(grep -o -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/code_tunnel.log | head -n 1)
         break
@@ -99,6 +103,9 @@ done
 if [ -f /tmp/vnc_tunnel.log ]; then
     VNC_URL=$(grep -o -E "https://[a-zA-Z0-9-]+\.trycloudflare\.com" /tmp/vnc_tunnel.log | head -n 1 || true)
 fi
+
+echo "$CODE_URL" > /tmp/code_url.txt
+echo "$VNC_URL" > /tmp/vnc_url.txt
 
 echo ""
 echo "======================================================="
@@ -132,7 +139,7 @@ You can test and run Turbo C++ programs directly in your browser:
 - **[👉 Open VS Code Web Editor]($CODE_URL)** — Full Visual Studio Code with the TurboVs extension pre-installed!
 $([ -n "$VNC_URL" ] && echo "- **[🖥️ Open DOSBox GUI Display]($VNC_URL/vnc.html?autoconnect=true)** — Live view of DOSBox CRT screen & graphics.")
 
-### 📝 Pre-Loaded Examples:
+### 📝 Pre-Loaded Examples in Workspace:
 - \`hello.cpp\` — Classic Turbo C++ with \`<iostream.h>\`, \`<conio.h>\`, \`clrscr()\`, \`cin >>\`, \`getch()\`
 - \`calculator.cpp\` — Retro interactive calculator
 - \`fibonacci.c\` — Classic C series generator
@@ -148,6 +155,22 @@ $([ -n "$VNC_URL" ] && echo "- **[🖥️ Open DOSBox GUI Display]($VNC_URL/vnc.
 MD_SUMMARY
 fi
 
-# 6. Launch code-server in foreground
-echo "[6/6] Launching code-server..."
-exec code-server --bind-addr "0.0.0.0:$PORT" --auth none --disable-telemetry "$WORKSPACE_DIR"
+# Post URL to git branch live-url if in git repo with push credentials
+if [ -n "$GITHUB_TOKEN" ] && [ -n "$CODE_URL" ]; then
+    echo "Publishing live URL to GitHub branch live-url..."
+    git config user.name "github-actions[bot]"
+    git config user.email "github-actions[bot]@users.noreply.github.com"
+    git checkout --orphan live-url 2>/dev/null || git checkout -B live-url
+    git rm -rf . >/dev/null 2>&1 || true
+    echo "$CODE_URL" > live_url.txt
+    echo "$VNC_URL" > live_vnc_url.txt
+    git add live_url.txt live_vnc_url.txt
+    git commit -m "chore: Update active VS Code Server URL [skip ci]" --allow-empty
+    git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live-url --force || true
+    git checkout main 2>/dev/null || true
+fi
+
+if [ "$MODE" = "--foreground" ]; then
+    echo "Running in foreground mode. Press Ctrl+C to terminate."
+    wait
+fi

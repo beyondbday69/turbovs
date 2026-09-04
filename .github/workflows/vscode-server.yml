@@ -4,13 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       duration:
-        description: 'Session Duration (in minutes, e.g. 60, 120, 360)'
+        description: 'Session Duration in minutes (e.g. 60, 120, 360)'
         required: false
         default: '120'
   push:
     paths:
       - '.github/workflows/vscode-server.yml'
       - 'scripts/**'
+
+permissions:
+  contents: write
 
 jobs:
   vscode-server:
@@ -21,6 +24,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -58,10 +63,19 @@ jobs:
           bash scripts/setup-turboc3.sh /home/runner/turboc3
           ls -la /home/runner/turboc3/BIN/TCC.EXE
 
-      - name: Launch TurboVs Cloud VS Code Server
+      - name: Start Cloud VS Code Server & Establish Public Tunnel
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash scripts/start-vscode-server.sh --daemon "$(pwd)/examples"
+
+      - name: Keep Server Alive for Interactive Testing
         env:
           SESSION_DURATION: ${{ github.event.inputs.duration || '120' }}
         run: |
-          echo "Launching VS Code Server with session duration of ${SESSION_DURATION} minutes..."
-          timeout "${SESSION_DURATION}m" bash scripts/start-vscode-server.sh "$(pwd)/examples" || true
-          echo "Session completed."
+          echo "======================================================="
+          echo "TurboVs Cloud VS Code Server is now running!"
+          echo "Keeping session alive for ${SESSION_DURATION} minutes..."
+          echo "To stop early, cancel this workflow run on GitHub."
+          echo "======================================================="
+          sleep "${SESSION_DURATION}m"

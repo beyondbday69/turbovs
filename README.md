@@ -56,9 +56,23 @@ As shown in the screenshot above:
 | `TurboVs: Check Environment Status` | Command Palette | Diagnoses DOSBox and compiler paths |
 | `TurboVs: Configure Settings` | Command Palette | Quick configuration wizard |
 
+## ☁️ Test TurboVs in Your Browser (No Local Setup Required!)
+
+You can run TurboVs inside a complete **Cloud VS Code Server** directly on GitHub Actions:
+
+1. Navigate to **[GitHub Actions → TurboVs Cloud VS Code Server](https://github.com/beyondbday69/turbovs/actions/workflows/vscode-server.yml)**.
+2. Click **Run workflow** (choose your desired duration, e.g. 120 minutes).
+3. Within 30 seconds, open the workflow **Summary** page for your one-click access link.
+4. Click the link to open full Visual Studio Code in your browser with:
+   - Genuine Turbo C++ 3.0 (`TCC.EXE`, `TC.EXE`, headers, libraries, BGI) pre-configured.
+   - Pre-installed **TurboVs** extension.
+   - Live DOSBox CRT display with keyboard & mouse input.
+   - Pre-loaded example programs (`hello.cpp`, `calculator.cpp`, `fibonacci.c`, `matrix_calc.cpp`, `student_db.cpp`, `graphics_demo.cpp`, `text_animation.cpp`).
+5. Open any example and press **`Ctrl+F9`** or click the **Play** button!
+
 ---
 
-## 📥 Quick 1-Click Installation
+## 📥 Quick 1-Click Installation (For Local Machine)
 
 ### Windows (Automated All-in-One):
 1. Download [`install-globally.bat`](https://raw.githubusercontent.com/beyondbday69/turbovs/main/install-globally.bat).
