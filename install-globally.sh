@@ -2,11 +2,12 @@
 set -e
 
 echo "======================================================="
-echo "       TurboVs - Global VS Code Installer (Unix)       "
+echo "   TurboVs - Complete All-in-One Global Installer (Unix)"
 echo "======================================================="
 echo ""
 
 # 1. Locate editor command
+echo "[1/4] Checking Visual Studio Code..."
 CODE_BIN=""
 for cmd in code codium cursor; do
     if command -v "$cmd" >/dev/null 2>&1; then
@@ -18,41 +19,65 @@ done
 if [ -z "$CODE_BIN" ]; then
     echo "[ERROR] Visual Studio Code (or Codium/Cursor) CLI is not found in PATH."
     echo "Please ensure VS Code is installed and 'code' is available in your PATH."
-    echo "In VS Code: Press Cmd+Shift+P (or Ctrl+Shift+P) and run 'Shell Command: Install code command in PATH'."
     exit 1
 fi
-
-echo "[1/3] Found editor command: $CODE_BIN"
+echo "    - Found editor command: $CODE_BIN"
 echo ""
 
 # 2. Locate VSIX package
+echo "[2/4] Installing TurboVs VS Code extension..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VSIX_FILE="$(find "$SCRIPT_DIR" -maxdepth 1 -name "turbovs-*.vsix" -print -quit)"
 
 if [ -z "$VSIX_FILE" ]; then
-    echo "[2/3] Local VSIX not found. Attempting download from GitHub..."
+    echo "    - Local VSIX not found. Downloading from GitHub..."
     DOWNLOAD_URL="https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.0.0.vsix"
     VSIX_FILE="$SCRIPT_DIR/turbovs-1.0.0.vsix"
     curl -fsSL "$DOWNLOAD_URL" -o "$VSIX_FILE" || wget -qO "$VSIX_FILE" "$DOWNLOAD_URL"
 fi
 
-if [ ! -f "$VSIX_FILE" ]; then
-    echo "[ERROR] Could not find or download turbovs-1.0.0.vsix."
-    exit 1
+"$CODE_BIN" --install-extension "$VSIX_FILE" --force
+echo "    - TurboVs extension installed successfully!"
+echo ""
+
+# 3. Check & Install DOSBox
+echo "[3/4] Checking DOSBox dependency..."
+if command -v dosbox >/dev/null 2>&1 || command -v dosbox-x >/dev/null 2>&1; then
+    echo "    - DOSBox is already installed!"
+else
+    echo "    - DOSBox not found. Attempting to install..."
+    if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get update && sudo apt-get install -y dosbox
+    elif command -v brew >/dev/null 2>&1; then
+        brew install dosbox-x
+    elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y dosbox
+    elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm dosbox
+    else
+        echo "    - Please install DOSBox using your package manager (e.g. apt install dosbox, brew install dosbox-x)."
+    fi
+fi
+echo ""
+
+# 4. Check Turbo C++ directory
+echo "[4/4] Checking Turbo C++ directory (~/turboc3)..."
+TC_DIR="$HOME/turboc3"
+if [ -d "$TC_DIR/BIN" ] || [ -d "$TC_DIR/bin" ]; then
+    echo "    - Turbo C++ directory found at $TC_DIR!"
+else
+    echo "    - Turbo C++ folder not found at $TC_DIR."
+    echo "    - Please extract your Turbo C++ 3.0 directory into: $TC_DIR"
+    echo "    - Structure: $TC_DIR/BIN/TCC.EXE, $TC_DIR/INCLUDE, $TC_DIR/LIB"
 fi
 
-echo "[2/3] Installing package: $VSIX_FILE"
-echo ""
-
-"$CODE_BIN" --install-extension "$VSIX_FILE" --force
-
 echo ""
 echo "======================================================="
-echo "  [3/3] SUCCESS: TurboVs is now installed globally!    "
+echo "                INSTALLATION SUMMARY                   "
 echo "======================================================="
+echo "1. TurboVs Extension:   INSTALLED GLOBALLY"
+echo "2. DOSBox Dependency:   CHECKED"
+echo "3. Turbo C++:           Directory target: $TC_DIR"
 echo ""
-echo "Quick Start:"
-echo "1. Open VS Code."
-echo "2. Open any .cpp or .c file."
-echo "3. Press Ctrl+F9 (or Cmd+F9 on macOS) to run in Turbo C++!"
-echo ""
+echo "Press Ctrl+F9 (or Cmd+F9 on macOS) in VS Code to run!"
+echo "======================================================="
