@@ -1,0 +1,205 @@
+name: Release & Publish Extension
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump type (if running without an existing tag)'
+        required: true
+        type: choice
+        options:
+          - 'none'
+          - 'patch'
+          - 'minor'
+          - 'major'
+        default: 'none'
+      prerelease:
+        description: 'Mark as Pre-release'
+        required: false
+        type: boolean
+        default: false
+      publish_marketplace:
+        description: 'Publish to VS Code Marketplace (requires VSCE_PAT secret)'
+        required: false
+        type: boolean
+        default: true
+      publish_openvsx:
+        description: 'Publish to Open VSX Registry (requires OVSX_PAT secret)'
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build, Package & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run Extension Unit Tests
+        run: node test/extension.test.js
+
+      - name: Resolve Version & Tag
+        id: versioning
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BUMP="${{ github.event.inputs.bump }}"
+
+          if [ -n "$BUMP" ] && [ "$BUMP" != "none" ]; then
+            echo "Bumping version via npm ($BUMP)..."
+            NEW_VER=$(npm version $BUMP --no-git-tag-version)
+            CLEAN_VER="${NEW_VER#v}"
+            TAG="v${CLEAN_VER}"
+
+            echo "Committing version bump $TAG..."
+            git commit -am "chore(release): $TAG [skip ci]" || true
+            git tag -a "$TAG" -m "Release $TAG"
+            
+            # Push changes & tag back to repository
+            git push origin HEAD:main --follow-tags || git push origin "$TAG" || true
+            
+            echo "version=$CLEAN_VER" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            CLEAN_VER="${TAG#v}"
+            echo "Triggered by tag push: $TAG"
+            
+            # Ensure package.json version matches tag
+            npm version "$CLEAN_VER" --no-git-tag-version || true
+            
+            echo "version=$CLEAN_VER" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          else
+            CLEAN_VER=$(node -p "require('./package.json').version")
+            TAG="v${CLEAN_VER}"
+            echo "Using version from package.json: $CLEAN_VER ($TAG)"
+            
+            # Ensure tag exists if not already present
+            git tag -a "$TAG" -m "Release $TAG" 2>/dev/null || true
+            git push origin "$TAG" 2>/dev/null || true
+            
+            echo "version=$CLEAN_VER" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Package VSIX
+        id: package
+        run: |
+          VERSION="${{ steps.versioning.outputs.version }}"
+          echo "Packaging TurboVs v$VERSION..."
+          npx @vscode/vsce package --no-dependencies
+
+          VSIX_PATH=$(find . -maxdepth 1 -name "turbovs-${VERSION}.vsix" -o -name "turbovs-*.vsix" | head -n 1)
+          if [ -z "$VSIX_PATH" ] || [ ! -f "$VSIX_PATH" ]; then
+            echo "Error: VSIX package not found!"
+            exit 1
+          fi
+
+          echo "Built package: $VSIX_PATH"
+          cp "$VSIX_PATH" turbovs.vsix
+
+          echo "vsix_path=$VSIX_PATH" >> $GITHUB_OUTPUT
+          echo "vsix_name=$(basename $VSIX_PATH)" >> $GITHUB_OUTPUT
+
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.versioning.outputs.tag }}"
+          VSIX_PATH="${{ steps.package.outputs.vsix_path }}"
+          PRERELEASE_FLAG=""
+          if [ "${{ github.event.inputs.prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          echo "Publishing GitHub Release for $TAG..."
+
+          ASSETS=(
+            "$VSIX_PATH"
+            "turbovs.vsix"
+            "install-globally.sh"
+            "install-globally.bat"
+          )
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists. Uploading updated assets..."
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            echo "Creating new release $TAG with assets..."
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --title "TurboVs $TAG" \
+              --generate-notes \
+              $PRERELEASE_FLAG
+          fi
+
+      - name: Publish to VS Code Marketplace
+        if: ${{ (github.event.inputs.publish_marketplace != 'false') && (env.VSCE_PAT != '') }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          echo "🚀 Publishing to Visual Studio Marketplace..."
+          npx @vscode/vsce publish --packagePath "${{ steps.package.outputs.vsix_path }}" -p "$VSCE_PAT" --no-dependencies
+
+      - name: Marketplace PAT Notice
+        if: ${{ env.VSCE_PAT == '' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          echo "ℹ️  VSCE_PAT secret not configured in repository."
+          echo "   GitHub Release with .vsix package was successfully published."
+          echo "   To auto-publish to marketplace.visualstudio.com, add secret 'VSCE_PAT' in repository Settings > Secrets."
+
+      - name: Publish to Open VSX Registry
+        if: ${{ (github.event.inputs.publish_openvsx != 'false') && (env.OVSX_PAT != '') }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          echo "🚀 Publishing to Open VSX Registry..."
+          npx ovsx publish "${{ steps.package.outputs.vsix_path }}" -p "$OVSX_PAT"
+
+      - name: Open VSX PAT Notice
+        if: ${{ env.OVSX_PAT == '' }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          echo "ℹ️  OVSX_PAT secret not configured in repository."
+          echo "   To auto-publish to open-vsx.org, add secret 'OVSX_PAT' in repository Settings > Secrets."
+
+      - name: Upload Release Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.vsix_name }}
+          path: |
+            ${{ steps.package.outputs.vsix_path }}
+            turbovs.vsix
+            install-globally.sh
+            install-globally.bat
+          retention-days: 30

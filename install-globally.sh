@@ -30,10 +30,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VSIX_FILE="$(find "$SCRIPT_DIR" -maxdepth 1 -name "turbovs-*.vsix" -print -quit)"
 
 if [ -z "$VSIX_FILE" ]; then
-    echo "    - Local VSIX not found. Downloading from GitHub..."
-    DOWNLOAD_URL="https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.1.0.vsix"
-    VSIX_FILE="$SCRIPT_DIR/turbovs-1.1.0.vsix"
-    curl -fsSL "$DOWNLOAD_URL" -o "$VSIX_FILE" || wget -qO "$VSIX_FILE" "$DOWNLOAD_URL"
+    echo "    - Local VSIX not found. Downloading latest TurboVs from GitHub..."
+    DOWNLOAD_URL="https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs.vsix"
+    VSIX_FILE="$SCRIPT_DIR/turbovs.vsix"
+    curl -fsSL "$DOWNLOAD_URL" -o "$VSIX_FILE" 2>/dev/null || wget -qO "$VSIX_FILE" "$DOWNLOAD_URL" 2>/dev/null || {
+        echo "    - Trying versioned asset fallback..."
+        curl -fsSL "https://github.com/beyondbday69/turbovs/releases/latest/download/turbovs-1.1.0.vsix" -o "$VSIX_FILE"
+    }
 fi
 
 "$CODE_BIN" --install-extension "$VSIX_FILE" --force

@@ -273,6 +273,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "echo 'No compilation needed for JavaScript'",
     "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies",
     "test:real": "node ./test/runRealVscode.js"
   },
   "devDependencies": {
