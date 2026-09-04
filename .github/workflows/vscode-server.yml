@@ -1,0 +1,67 @@
+name: TurboVs Cloud VS Code Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Session Duration (in minutes, e.g. 60, 120, 360)'
+        required: false
+        default: '120'
+  push:
+    paths:
+      - '.github/workflows/vscode-server.yml'
+      - 'scripts/**'
+
+jobs:
+  vscode-server:
+    name: Run Cloud VS Code Server & DOSBox
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Node Dependencies
+        run: npm install
+
+      - name: Install System Dependencies (DOSBox & X11 Display)
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            dosbox xvfb openbox x11vnc novnc websockify || true
+
+      - name: Install Cloudflare Tunnel (cloudflared)
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
+          sudo chmod +x /usr/local/bin/cloudflared
+          cloudflared --version
+
+      - name: Install code-server (VS Code Web)
+        run: |
+          curl -fsSL https://code-server.dev/install.sh | sh
+          code-server --version
+
+      - name: Package TurboVs Extension VSIX
+        run: |
+          npx @vscode/vsce package --no-dependencies
+          ls -lh *.vsix
+
+      - name: Setup Genuine Turbo C++ 3.0 Compiler Files
+        run: |
+          bash scripts/setup-turboc3.sh /home/runner/turboc3
+          ls -la /home/runner/turboc3/BIN/TCC.EXE
+
+      - name: Launch TurboVs Cloud VS Code Server
+        env:
+          SESSION_DURATION: ${{ github.event.inputs.duration || '120' }}
+        run: |
+          echo "Launching VS Code Server with session duration of ${SESSION_DURATION} minutes..."
+          timeout "${SESSION_DURATION}m" bash scripts/start-vscode-server.sh "$(pwd)/examples" || true
+          echo "Session completed."

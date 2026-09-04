@@ -67,8 +67,12 @@ if [ -d "$TC_DIR/BIN" ] || [ -d "$TC_DIR/bin" ]; then
     echo "    - Turbo C++ directory found at $TC_DIR!"
 else
     echo "    - Turbo C++ folder not found at $TC_DIR."
-    echo "    - Please extract your Turbo C++ 3.0 directory into: $TC_DIR"
-    echo "    - Structure: $TC_DIR/BIN/TCC.EXE, $TC_DIR/INCLUDE, $TC_DIR/LIB"
+    echo "    - Automatically downloading and setting up Turbo C++ 3.0 files..."
+    if [ -f "$SCRIPT_DIR/scripts/setup-turboc3.sh" ]; then
+        bash "$SCRIPT_DIR/scripts/setup-turboc3.sh" "$TC_DIR" || true
+    else
+        curl -fsSL https://raw.githubusercontent.com/beyondbday69/turbovs/main/scripts/setup-turboc3.sh | bash -s "$TC_DIR" || true
+    fi
 fi
 
 echo ""
