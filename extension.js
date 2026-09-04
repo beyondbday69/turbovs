@@ -61,7 +61,7 @@ function activate(context) {
     statusBarItem.show();
 
     // 3. Register Primary Commands (turbovs.*)
-    const runCmd = vscode.commands.registerCommand('turbovs.run', () => runTurboCpp(context));
+    const runCmd = vscode.commands.registerCommand('turbovs.run', (options) => runTurboCpp(context, options));
     const stopCmd = vscode.commands.registerCommand('turbovs.stop', () => stopTurboCpp());
     const openIdeCmd = vscode.commands.registerCommand('turbovs.openIde', () => openTurboCppIde(context));
     const checkEnvCmd = vscode.commands.registerCommand('turbovs.checkEnvironment', () => checkEnvironment());
@@ -73,7 +73,7 @@ function activate(context) {
     const setInputCmd = vscode.commands.registerCommand('turbovs.setInput', () => setInputPrompt(context));
 
     // Backward compatibility aliases
-    const legacyRunCmd = vscode.commands.registerCommand('turboCpp.run', () => runTurboCpp(context));
+    const legacyRunCmd = vscode.commands.registerCommand('turboCpp.run', (options) => runTurboCpp(context, options));
     const legacyStopCmd = vscode.commands.registerCommand('turboCpp.stop', () => stopTurboCpp());
     const legacyOpenIdeCmd = vscode.commands.registerCommand('turboCpp.openIde', () => openTurboCppIde(context));
     const legacyCheckEnvCmd = vscode.commands.registerCommand('turboCpp.checkEnvironment', () => checkEnvironment());
@@ -921,7 +921,7 @@ function openIoPanel(context, preferredTab = 'form') {
     ioWebviewPanel.webview.onDidReceiveMessage(async message => {
         switch (message.command) {
             case 'run':
-                vscode.commands.executeCommand('turbovs.run');
+                vscode.commands.executeCommand('turbovs.run', { skipPrompt: true });
                 break;
             case 'updateInput':
                 currentCustomInput = message.text || '';
@@ -972,7 +972,7 @@ async function checkScriptInputsPrompt(context) {
             'Run Program',
             'Open Input Panel'
         );
-        if (choice === 'Run Program') vscode.commands.executeCommand('turbovs.run');
+        if (choice === 'Run Program') vscode.commands.executeCommand('turbovs.run', { skipPrompt: true });
         if (choice === 'Open Input Panel') openInputPanel(context);
         return;
     }
@@ -987,7 +987,7 @@ async function checkScriptInputsPrompt(context) {
     if (choice === 'Open Input Panel') {
         openInputPanel(context);
     } else if (choice === 'Run Program') {
-        vscode.commands.executeCommand('turbovs.run');
+        vscode.commands.executeCommand('turbovs.run', { skipPrompt: true });
     }
 }
 
@@ -1130,7 +1130,7 @@ async function setInputPrompt(context) {
         if (choice === 'Open Input Panel') {
             openInputPanel(context);
         } else if (choice === 'Run Program') {
-            vscode.commands.executeCommand('turbovs.run');
+            vscode.commands.executeCommand('turbovs.run', { skipPrompt: true });
         }
     }
 }
@@ -1737,10 +1737,36 @@ ${toolkitUri ? `<script type="module" src="${toolkitUri}"></script>` : ''}
 }
 
 /**
+ * Determines whether to auto-prompt the user for input before running
+ */
+function shouldPromptForInput(detectedInputs, options = {}, autoPromptSetting = true) {
+    if (!autoPromptSetting) return false;
+    if (options && options.skipPrompt) return false;
+    return Array.isArray(detectedInputs) && detectedInputs.length > 0;
+}
+
+/**
+ * Normalizes and formats user input string for DOS stdin
+ */
+function formatUserInputString(userInput, detectedInputs = []) {
+    if (!userInput) return '';
+    let formatted = userInput.replace(/\\n/g, '\n');
+    const hasLineInput = Array.isArray(detectedInputs) && detectedInputs.some(d => d.type === 'line');
+    if (detectedInputs && detectedInputs.length > 1 && !formatted.includes('\n') && !hasLineInput && formatted.trim()) {
+        const tokens = formatted.trim().split(/\s+/);
+        if (tokens.length > 1) {
+            formatted = tokens.join('\n');
+        }
+    }
+    return formatted;
+}
+
+/**
  * Main command: Run active C/C++ program in Turbo C++ via DOSBox
  * @param {vscode.ExtensionContext} context
+ * @param {{ skipPrompt?: boolean }} [options]
  */
-async function runTurboCpp(context) {
+async function runTurboCpp(context, options = {}) {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         vscode.window.showErrorMessage('No active file open. Please open a .cpp or .c file to run with TurboVs.');
@@ -1795,8 +1821,62 @@ async function runTurboCpp(context) {
         workspaceHostDir = path.dirname(filePath);
     }
 
-    // 4. Handle DOS 8.3 filename compatibility
     const originalFileName = path.basename(filePath);
+
+    // 4. Automatically prompt user with VS Code Input UI when input is needed
+    const scriptCode = document.getText();
+    const detectedInputs = detectScriptInputs(scriptCode);
+    const autoPromptSetting = getSetting('autoPromptInput', true);
+
+    if (shouldPromptForInput(detectedInputs, options, autoPromptSetting)) {
+        let initialVal = currentCustomInput;
+        if (!initialVal) {
+            const candidateIn = path.join(workspaceHostDir, 'TC_IN.TXT');
+            const candidateInput = path.join(workspaceHostDir, 'input.txt');
+            if (fs.existsSync(candidateIn)) {
+                try { initialVal = fs.readFileSync(candidateIn, 'utf8').trim(); } catch (_) {}
+            } else if (fs.existsSync(candidateInput)) {
+                try { initialVal = fs.readFileSync(candidateInput, 'utf8').trim(); } catch (_) {}
+            }
+        }
+
+        let promptMsg = '';
+        let placeholderMsg = '';
+        if (detectedInputs.length === 1) {
+            const d = detectedInputs[0];
+            promptMsg = d.label ? `${d.label} [variable: ${d.variable}]` : `Enter value for ${d.variable}:`;
+            placeholderMsg = d.placeholder || `Value for ${d.variable}`;
+        } else {
+            const varNames = detectedInputs.map(d => d.variable).join(', ');
+            promptMsg = `Program needs ${detectedInputs.length} inputs (${varNames}). Use space or \\n between values:`;
+            const sampleExamples = detectedInputs.map((d, i) => d.placeholder ? d.placeholder.replace('Value for ', '') : `val${i + 1}`).slice(0, 3).join(' ');
+            placeholderMsg = `e.g. ${sampleExamples || '10 + 5'}`;
+        }
+
+        const userInput = await vscode.window.showInputBox({
+            title: `TurboVs: Input for ${originalFileName}`,
+            prompt: promptMsg,
+            value: initialVal ? initialVal.replace(/\r?\n/g, '\\n') : '',
+            placeHolder: placeholderMsg,
+            ignoreFocusOut: true
+        });
+
+        // User pressed Escape / cancelled the input box
+        if (userInput === undefined) {
+            vscode.window.showInformationMessage('TurboVs: Run cancelled.');
+            return;
+        }
+
+        const formattedInput = formatUserInputString(userInput, detectedInputs);
+        currentCustomInput = formattedInput;
+        syncInputToDisk(formattedInput);
+
+        if (ioWebviewPanel) {
+            ioWebviewPanel.webview.postMessage({ command: 'setInput', text: formattedInput });
+        }
+    }
+
+    // 5. Handle DOS 8.3 filename compatibility
     let targetDosFileName = originalFileName;
     let isTempAlias = false;
     let tempAliasPath = null;
@@ -1831,7 +1911,7 @@ async function runTurboCpp(context) {
         if (fs.existsSync(hostExePath)) fs.unlinkSync(hostExePath);
     } catch (_) {}
 
-    // 5. Memory model flag
+    // 6. Memory model flag
     let memoryModelSetting = getSetting('memoryModel', 'default');
     let memoryModelFlag = '';
     if (memoryModelSetting.includes('-m')) {
@@ -1839,7 +1919,7 @@ async function runTurboCpp(context) {
         if (match) memoryModelFlag = match[0];
     }
 
-    // 6. Generate custom DOSBox configuration
+    // 7. Generate custom DOSBox configuration
     const closeOnExit = getSetting('closeOnExit', true);
     const windowResolution = getSetting('windowResolution', '1024x768');
     const isFullscreen = windowResolution === 'fullscreen';
@@ -1852,10 +1932,6 @@ async function runTurboCpp(context) {
     executionStartTime = Date.now();
 
     // Determine input to pass to stdin
-    // Check script first to detect how many inputs are needed
-    const scriptCode = document.getText();
-    const detectedInputs = detectScriptInputs(scriptCode);
-
     let inputVal = currentCustomInput;
     if (!inputVal) {
         const candidateIn = path.join(workspaceHostDir, 'TC_IN.TXT');
@@ -2326,5 +2402,8 @@ module.exports = {
     setInputPrompt,
     getIoWebviewHtml,
     escapeHtml,
-    ensurePtyTerminal
+    ensurePtyTerminal,
+    runTurboCpp,
+    shouldPromptForInput,
+    formatUserInputString
 };

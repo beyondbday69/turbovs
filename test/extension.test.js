@@ -230,5 +230,21 @@ assert(fullHtml.includes('codicon.css'), 'Must load codicon.css stylesheet');
 assert(fullHtml.includes('Content-Security-Policy'), 'Must include CSP header');
 console.log('  ✔ Webview asset URI resolution validated.');
 
-console.log('\n--- ALL UNIT TESTS (14/14) PASSED SUCCESSFULLY! ---');
+// Test 15: shouldPromptForInput conditions
+console.log('[Test 15] Testing shouldPromptForInput()...');
+assert.strictEqual(ext.shouldPromptForInput([{ type: 'cin', variable: 'x' }], {}, true), true, 'Should prompt when inputs exist');
+assert.strictEqual(ext.shouldPromptForInput([], {}, true), false, 'Should not prompt when 0 inputs exist');
+assert.strictEqual(ext.shouldPromptForInput([{ type: 'cin', variable: 'x' }], { skipPrompt: true }, true), false, 'Should not prompt when skipPrompt is true');
+assert.strictEqual(ext.shouldPromptForInput([{ type: 'cin', variable: 'x' }], {}, false), false, 'Should not prompt when autoPrompt setting is false');
+console.log('  ✔ shouldPromptForInput() passed all tests.');
+
+// Test 16: formatUserInputString parsing
+console.log('[Test 16] Testing formatUserInputString()...');
+assert.strictEqual(ext.formatUserInputString('10\\n+\\n5', detectedCpp), '10\n+\n5', 'Escaped \\n should be converted to newlines');
+assert.strictEqual(ext.formatUserInputString('10 + 5', [{ type: 'cin' }, { type: 'cin' }, { type: 'cin' }]), '10\n+\n5', 'Space-separated tokens for multiple cin inputs should be converted to newlines');
+assert.strictEqual(ext.formatUserInputString('Hello World', [{ type: 'line', variable: 'name' }]), 'Hello World', 'Line inputs should preserve spaces');
+assert.strictEqual(ext.formatUserInputString('42', [{ type: 'cin', variable: 'a' }]), '42', 'Single input should stay intact');
+console.log('  ✔ formatUserInputString() passed all tests.');
+
+console.log('\n--- ALL UNIT TESTS (16/16) PASSED SUCCESSFULLY! ---');
 

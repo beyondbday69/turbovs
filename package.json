@@ -256,6 +256,11 @@
           "default": "",
           "description": "Default input text supplied to programs expecting stdin (cin >> / scanf) if no custom input is specified."
         },
+        "turbovs.autoPromptInput": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open VS Code input prompt before running when the program needs inputs (cin >>, scanf, etc.)."
+        },
         "turbovs.executionTimeout": {
           "type": "integer",
           "default": 15,
