@@ -1,0 +1,38 @@
+# Change Log
+
+All notable changes to the "TurboVs" extension will be documented in this file.
+
+## [1.0.0] - 2026-09-04
+
+### Added
+- **TurboVs Initial Release**: Complete VS Code extension for running legacy Turbo C++ 3.0 / Borland C++ code natively inside DOSBox / DOSBox-X.
+- **Legacy C++ Compatibility**: Full support for classic headers and functions:
+  - `<iostream.h>`, `<conio.h>`, `<graphics.h>`, `<dos.h>`, `<process.h>`
+  - `void main()`, `clrscr()`, `getch()`, `getche()`, `gotoyx()`, `textbackground()`, `textcolor()`
+  - Authentic stream I/O (`cout <<`, `cin >>`) and C I/O (`printf`, `scanf`)
+- **VS Code Integration**:
+  - Run/Play button in editor title bar when viewing `.cpp` or `.c` files.
+  - Stop button in editor title bar to terminate runaway programs.
+  - Right-click context menu: `Run with TurboVs` and `Open in Turbo C++ IDE`.
+  - Command palette shortcuts: `TurboVs: Run Program` (`Ctrl+F9` / `Cmd+F9`).
+- **Terminal Integration**:
+  - Dedicated integrated terminal named `"TurboVs"`.
+  - Automatic terminal clearing option before each build.
+  - Clean build logging and runtime status banners.
+- **Interactive DOSBox Support**:
+  - Full keyboard input preservation for `cin`, `scanf`, `getch()`.
+  - Support for graphics mode (`graphics.h`, BGI drivers).
+- **Intelligent Error Handling & Diagnostics**:
+  - Automatically captures compiler errors and warnings from `TCC.EXE`.
+  - Maps compiler messages directly to line numbers with squiggles in the VS Code editor.
+  - Actionable error prompts if DOSBox or Turbo C++ paths are missing or incorrect.
+- **Smart DOS 8.3 Filename Compatibility**:
+  - Handles modern long filenames and paths with spaces safely by creating seamless DOS 8.3 aliases (`TC_RUN.CPP`).
+  - Automatically translates compiler error line numbers back to the original source file.
+- **Cross-Platform Support**:
+  - Windows (DOSBox 0.74, DOSBox-X)
+  - Linux (Native packages, Snap, Flatpak)
+  - macOS (Homebrew, DMG installations)
+- **Status Bar Indicator & Quick Menu**:
+  - Visual indicator showing environment status (`TurboVs: Ready`, `Running...`, or `Setup Needed`).
+  - Interactive QuickPick menu for one-click configuration, testing, and IDE launching.

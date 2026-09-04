@@ -1,0 +1,13 @@
+node_modules/
+.vscode-test/
+*.vsix
+.DS_Store
+Thumbs.db
+*.log
+TC_ERR.LOG
+TC_RUN.*
+*.OBJ
+*.MAP
+*.EXE
+*.swp
+*.bak

@@ -1,0 +1,12 @@
+.vscode/**
+.vscode-test/**
+test/**
+*.map
+*.log
+TC_ERR.LOG
+TC_RUN.*
+*.OBJ
+*.MAP
+*.EXE
+.gitignore
+generate_icon.py

@@ -1,0 +1,201 @@
+{
+  "name": "turbovs",
+  "displayName": "TurboVs",
+  "description": "Run legacy Turbo C++ programs (iostream.h, conio.h, graphics.h) directly from VS Code using DOSBox / DOSBox-X.",
+  "version": "1.0.0",
+  "publisher": "turbocpp-community",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers",
+    "Other"
+  ],
+  "keywords": [
+    "turbovs",
+    "turbo c++",
+    "turboc",
+    "dosbox",
+    "dosbox-x",
+    "conio.h",
+    "iostream.h",
+    "graphics.h",
+    "borland",
+    "legacy c++"
+  ],
+  "icon": "media/icon.png",
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:cpp",
+    "onLanguage:c",
+    "onCommand:turbovs.run",
+    "onCommand:turbovs.stop",
+    "onCommand:turbovs.openIde",
+    "onCommand:turbovs.checkEnvironment",
+    "onCommand:turbovs.configure"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "turbovs.run",
+        "title": "TurboVs: Run Program",
+        "icon": "$(play)"
+      },
+      {
+        "command": "turbovs.stop",
+        "title": "TurboVs: Stop Program",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "turbovs.openIde",
+        "title": "TurboVs: Open in Turbo C++ IDE",
+        "icon": "$(window)"
+      },
+      {
+        "command": "turbovs.checkEnvironment",
+        "title": "TurboVs: Check Environment Status",
+        "icon": "$(check)"
+      },
+      {
+        "command": "turbovs.configure",
+        "title": "TurboVs: Configure Settings",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "turbovs.run",
+          "group": "navigation@1",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.stop",
+          "group": "navigation@2",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "turbovs.run",
+          "group": "1_run",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        },
+        {
+          "command": "turbovs.openIde",
+          "group": "2_run",
+          "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "turbovs.run"
+        },
+        {
+          "command": "turbovs.stop"
+        },
+        {
+          "command": "turbovs.openIde"
+        },
+        {
+          "command": "turbovs.checkEnvironment"
+        },
+        {
+          "command": "turbovs.configure"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "turbovs.run",
+        "key": "ctrl+f9",
+        "mac": "cmd+f9",
+        "when": "editorTextFocus && (resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C)"
+      },
+      {
+        "command": "turbovs.stop",
+        "key": "ctrl+shift+f9",
+        "mac": "cmd+shift+f9",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "TurboVs",
+      "properties": {
+        "turbovs.dosboxPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to DOSBox or DOSBox-X executable. Leave blank to automatically detect from PATH and standard system paths."
+        },
+        "turbovs.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Turbo C++ installation directory (e.g. C:\\TURBOC3 or /home/user/turboc3). Must contain BIN, INCLUDE, and LIB folders."
+        },
+        "turbovs.workspacePath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom directory mounted as DOS drive D:. Leave blank to use the directory containing the active C/C++ file."
+        },
+        "turbovs.autoClearTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically clear the TurboVs terminal before running a program."
+        },
+        "turbovs.closeOnExit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically close DOSBox after program execution finishes and user presses any key."
+        },
+        "turbovs.windowResolution": {
+          "type": "string",
+          "default": "1024x768",
+          "enum": [
+            "original",
+            "800x600",
+            "1024x768",
+            "1280x960",
+            "fullscreen"
+          ],
+          "description": "Display window resolution for the DOSBox session."
+        },
+        "turbovs.dosboxArgs": {
+          "type": "string",
+          "default": "",
+          "description": "Additional command-line arguments to pass to DOSBox."
+        },
+        "turbovs.memoryModel": {
+          "type": "string",
+          "default": "default",
+          "enum": [
+            "default",
+            "small (-ms)",
+            "medium (-mm)",
+            "compact (-mc)",
+            "large (-ml)",
+            "huge (-mh)"
+          ],
+          "description": "Turbo C++ memory model flag passed to the TCC compiler."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "echo 'No compilation needed for JavaScript'",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.2.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/turbocpp-community/turbovs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/turbocpp-community/turbovs/issues"
+  },
+  "homepage": "https://github.com/turbocpp-community/turbovs#readme"
+}
