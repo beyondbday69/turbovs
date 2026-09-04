@@ -2,7 +2,16 @@
 const mockVscode = {
     window: {
         terminals: [],
-        createTerminal: () => ({ sendText: () => {}, show: () => {} }),
+        createTerminal: (options) => {
+            const t = {
+                name: typeof options === 'string' ? options : (options && options.name ? options.name : 'Terminal'),
+                sendText: () => {},
+                show: () => {},
+                dispose: () => {}
+            };
+            mockVscode.window.terminals.push(t);
+            return t;
+        },
         createStatusBarItem: () => ({ show: () => {}, text: '', tooltip: '' }),
         createOutputChannel: () => ({ appendLine: () => {}, clear: () => {}, show: () => {} }),
         showInformationMessage: async () => {},
@@ -68,6 +77,14 @@ const mockVscode = {
     Uri: {
         parse: (str) => ({ fsPath: str, toString: () => str }),
         file: (str) => ({ fsPath: str, toString: () => str })
+    },
+    EventEmitter: class {
+        constructor() {
+            this.event = (listener) => { this.listener = listener; return { dispose: () => {} }; };
+        }
+        fire(data) {
+            if (this.listener) this.listener(data);
+        }
     }
 };
 

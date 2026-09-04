@@ -61,8 +61,11 @@ if [ -n "$INPUT_ARG" ]; then
     if [ -f "$INPUT_ARG" ]; then
         cp "$INPUT_ARG" "$IN_TXT"
     else
-        printf "%s\r\n" "$INPUT_ARG" > "$IN_TXT"
+        printf "%b\r\n" "$INPUT_ARG" > "$IN_TXT"
     fi
+elif [ ! -t 0 ]; then
+    # Read from piped stdin if available
+    cat > "$IN_TXT"
 elif [ -f "$WORKSPACE_DIR/input.txt" ]; then
     cp "$WORKSPACE_DIR/input.txt" "$IN_TXT"
 elif [ ! -f "$IN_TXT" ]; then

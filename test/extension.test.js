@@ -125,4 +125,81 @@ const panel = ext.openIoPanel({});
 assert(panel && typeof panel.reveal === 'function', 'openIoPanel should return webview panel');
 console.log('  ✔ openIoPanel() returned valid panel.');
 
-console.log('\n--- ALL UNIT TESTS (8/8) PASSED SUCCESSFULLY! ---');
+// Test 9: detectScriptInputs() analyzing C/C++ source code
+console.log('[Test 9] Testing detectScriptInputs()...');
+const cppCode = `
+#include <iostream.h>
+#include <conio.h>
+int main() {
+    float a, b;
+    char op;
+    cout << "Enter first number: ";
+    cin >> a;
+    cout << "Enter operator (+, -, *, /): ";
+    cin >> op;
+    cout << "Enter second number: ";
+    cin >> b;
+    cout << "Press any key to exit...";
+    getch();
+    return 0;
+}
+`;
+const detectedCpp = ext.detectScriptInputs(cppCode);
+assert.strictEqual(detectedCpp.length, 4, 'Should detect 4 inputs (a, op, b, getch)');
+assert.strictEqual(detectedCpp[0].variable, 'a');
+assert.strictEqual(detectedCpp[0].label, 'Enter first number:');
+assert.strictEqual(detectedCpp[1].variable, 'op');
+assert.strictEqual(detectedCpp[1].label, 'Enter operator (+, -, *, /):');
+assert.strictEqual(detectedCpp[2].variable, 'b');
+assert.strictEqual(detectedCpp[2].label, 'Enter second number:');
+assert.strictEqual(detectedCpp[3].type, 'getch');
+assert.strictEqual(detectedCpp[3].label, 'Press any key to exit...');
+
+// C Code with scanf
+const cCode = `
+#include <stdio.h>
+int main() {
+    int id;
+    char name[50];
+    printf("Enter Student ID: ");
+    scanf("%d", &id);
+    printf("Enter Student Name: ");
+    scanf("%s", name);
+    return 0;
+}
+`;
+const detectedC = ext.detectScriptInputs(cCode);
+assert.strictEqual(detectedC.length, 2, 'Should detect 2 inputs from scanf (id, name)');
+assert.strictEqual(detectedC[0].variable, 'id');
+assert.strictEqual(detectedC[0].label, 'Enter Student ID:');
+assert.strictEqual(detectedC[1].variable, 'name');
+assert.strictEqual(detectedC[1].label, 'Enter Student Name:');
+
+// Empty script test
+const noInputs = `int main() { printf("Hello World\\n"); return 0; }`;
+assert.strictEqual(ext.detectScriptInputs(noInputs).length, 0, 'Script without cin/scanf should detect 0 inputs');
+console.log('  ✔ detectScriptInputs() passed all tests.');
+
+// Test 10: openInputPanel() creates dedicated separate input panel
+console.log('[Test 10] Testing openInputPanel()...');
+const inputPanel = ext.openInputPanel({});
+assert(inputPanel && typeof inputPanel.reveal === 'function', 'openInputPanel should return webview panel');
+console.log('  ✔ openInputPanel() returned valid panel.');
+
+// Test 11: ensurePtyTerminal creates clean Pseudoterminal
+console.log('[Test 11] Testing ensurePtyTerminal()...');
+const term = ext.ensurePtyTerminal();
+assert(term && term.name === 'TurboVs', 'ensurePtyTerminal should return terminal named TurboVs');
+console.log('  ✔ ensurePtyTerminal() returned valid terminal.');
+
+// Test 12: getIoWebviewHtml with detected inputs generates separate input fields
+console.log('[Test 12] Testing getIoWebviewHtml with detected inputs...');
+const htmlWithInputs = ext.getIoWebviewHtml('10\n+\n5\nq', 'Result: 15', detectedCpp, 'calc.cpp', 'form');
+assert(htmlWithInputs.includes('Separate Input Fields'), 'Must include Separate Input Fields tab');
+assert(htmlWithInputs.includes('calc.cpp'), 'Must include active file name badge');
+assert(htmlWithInputs.includes('4 Inputs'), 'Must indicate 4 inputs detected');
+assert(htmlWithInputs.includes('stdinInput'), 'Must include raw multiline textarea fallback');
+assert(htmlWithInputs.includes('Result: 15'), 'Must include output');
+console.log('  ✔ getIoWebviewHtml with separate inputs generated valid UI.');
+
+console.log('\n--- ALL UNIT TESTS (12/12) PASSED SUCCESSFULLY! ---');

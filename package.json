@@ -35,6 +35,8 @@
     "onCommand:turbovs.checkEnvironment",
     "onCommand:turbovs.configure",
     "onCommand:turbovs.openIoPanel",
+    "onCommand:turbovs.openInputPanel",
+    "onCommand:turbovs.checkScriptInputs",
     "onCommand:turbovs.setInput"
   ],
   "contributes": {
@@ -45,9 +47,19 @@
         "icon": "$(play)"
       },
       {
+        "command": "turbovs.openInputPanel",
+        "title": "TurboVs: Input Panel (Separate Fields per Input)",
+        "icon": "$(list-ordered)"
+      },
+      {
         "command": "turbovs.openIoPanel",
         "title": "TurboVs: Open Input/Output Panel",
         "icon": "$(terminal-view)"
+      },
+      {
+        "command": "turbovs.checkScriptInputs",
+        "title": "TurboVs: Check Script Inputs",
+        "icon": "$(search)"
       },
       {
         "command": "turbovs.setInput",
@@ -83,12 +95,12 @@
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         },
         {
-          "command": "turbovs.openIoPanel",
+          "command": "turbovs.openInputPanel",
           "group": "navigation@2",
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         },
         {
-          "command": "turbovs.setInput",
+          "command": "turbovs.openIoPanel",
           "group": "navigation@3",
           "when": "resourceExtname == .cpp || resourceExtname == .c || resourceExtname == .CPP || resourceExtname == .C"
         },
@@ -125,7 +137,13 @@
           "command": "turbovs.run"
         },
         {
+          "command": "turbovs.openInputPanel"
+        },
+        {
           "command": "turbovs.openIoPanel"
+        },
+        {
+          "command": "turbovs.checkScriptInputs"
         },
         {
           "command": "turbovs.setInput"

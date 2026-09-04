@@ -15,6 +15,7 @@ let ioWebviewPanel = null;
 let currentCustomInput = '';
 let lastProgramOutput = '';
 let executionStartTime = 0;
+let activeProcess = null;
 
 /**
  * Helper to get configuration with turbovs primary and turboCpp fallback
@@ -64,6 +65,8 @@ function activate(context) {
     const checkEnvCmd = vscode.commands.registerCommand('turbovs.checkEnvironment', () => checkEnvironment());
     const configureCmd = vscode.commands.registerCommand('turbovs.configure', () => configureSettings());
     const quickMenuCmd = vscode.commands.registerCommand('turbovs.quickMenu', () => showQuickMenu(context));
+    const openInputPanelCmd = vscode.commands.registerCommand('turbovs.openInputPanel', () => openInputPanel(context));
+    const checkScriptInputsCmd = vscode.commands.registerCommand('turbovs.checkScriptInputs', () => checkScriptInputsPrompt(context));
     const openIoPanelCmd = vscode.commands.registerCommand('turbovs.openIoPanel', () => openIoPanel(context));
     const setInputCmd = vscode.commands.registerCommand('turbovs.setInput', () => setInputPrompt(context));
 
@@ -76,8 +79,17 @@ function activate(context) {
 
     context.subscriptions.push(
         runCmd, stopCmd, openIdeCmd, checkEnvCmd, configureCmd, quickMenuCmd,
-        openIoPanelCmd, setInputCmd,
+        openInputPanelCmd, checkScriptInputsCmd, openIoPanelCmd, setInputCmd,
         legacyRunCmd, legacyStopCmd, legacyOpenIdeCmd, legacyCheckEnvCmd, legacyConfigureCmd
+    );
+
+    // Listen to active editor changes to live-update input panel if open
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(editor => {
+            if (editor && ioWebviewPanel) {
+                refreshIoPanel(editor);
+            }
+        })
     );
 
     // 4. Listen to configuration changes to update status bar
@@ -121,9 +133,19 @@ async function showQuickMenu(context) {
             action: 'run'
         },
         {
+            label: '$(list-ordered) Open Input Panel (Separate Input Fields)',
+            description: 'Inspect script inputs and provide values in separate boxes',
+            action: 'inputPanel'
+        },
+        {
             label: '$(terminal-view) Open Input / Output Panel',
             description: 'Dedicated competitive programming panel for stdin and clean stdout',
             action: 'ioPanel'
+        },
+        {
+            label: '$(search) Check Script Inputs',
+            description: 'Count and list all cin, scanf, and getch inputs in this script',
+            action: 'checkInputs'
         },
         {
             label: '$(edit) Set Program Input (stdin)',
@@ -164,8 +186,14 @@ async function showQuickMenu(context) {
         case 'run':
             vscode.commands.executeCommand('turbovs.run');
             break;
+        case 'inputPanel':
+            vscode.commands.executeCommand('turbovs.openInputPanel');
+            break;
         case 'ioPanel':
             vscode.commands.executeCommand('turbovs.openIoPanel');
+            break;
+        case 'checkInputs':
+            vscode.commands.executeCommand('turbovs.checkScriptInputs');
             break;
         case 'setInput':
             vscode.commands.executeCommand('turbovs.setInput');
@@ -627,6 +655,152 @@ function escapeHtml(str) {
 }
 
 /**
+ * Detects inputs requested in a C/C++ source file (cin, scanf, gets, getch)
+ * and extracts prompt labels from previous output statements.
+ */
+function detectScriptInputs(rawCode) {
+    if (!rawCode) return [];
+    const lines = rawCode.split(/\r?\n/);
+    const inputs = [];
+
+    function extractRecentPrompt(currentIndex) {
+        for (let j = currentIndex - 1; j >= Math.max(0, currentIndex - 6); j--) {
+            const l = lines[j].trim();
+            const strMatches = [...l.matchAll(/["\x27]([^"\x27]+)["\x27]/g)];
+            if (strMatches.length > 0) {
+                const parts = [];
+                for (const m of strMatches) {
+                    const s = m[1].replace(/\\n/g, '').trim();
+                    if (s && !/^[=\-*#|_\s]+$/.test(s) && !s.toLowerCase().includes('copyright')) {
+                        parts.push(s);
+                    }
+                }
+                if (parts.length > 0) {
+                    return parts.join(' ');
+                }
+            }
+        }
+        return '';
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        const commentIdx = line.indexOf('//');
+        if (commentIdx !== -1) line = line.substring(0, commentIdx);
+        line = line.trim();
+        if (!line) continue;
+
+        // 1. cin >> var1 >> var2;
+        if (line.match(/\bcin\s*>>/)) {
+            const tokens = line.split('>>').slice(1);
+            for (let token of tokens) {
+                token = token.replace(/;.*$/, '').trim();
+                if (token) {
+                    const prompt = extractRecentPrompt(i) || (`Enter ${token}:`);
+                    inputs.push({
+                        type: 'cin',
+                        variable: token,
+                        label: prompt,
+                        line: i + 1,
+                        placeholder: `Value for ${token}`
+                    });
+                }
+            }
+        }
+        // 2. scanf("...", &var);
+        else if (line.match(/\bscanf\s*\(/)) {
+            const m = line.match(/\bscanf\s*\(\s*["\x27]([^"\x27]+)["\x27]\s*,\s*([^)]+)\)/);
+            if (m) {
+                const vars = m[2].split(',').map(v => v.replace(/[&\s]/g, ''));
+                for (let v of vars) {
+                    if (v) {
+                        const prompt = extractRecentPrompt(i) || (`Enter ${v}:`);
+                        inputs.push({
+                            type: 'scanf',
+                            variable: v,
+                            label: prompt,
+                            line: i + 1,
+                            placeholder: `Value for ${v}`
+                        });
+                    }
+                }
+            }
+        }
+        // 3. cin.getline(...) / gets(...)
+        else if (line.match(/\b(?:cin\.getline|cin\.get|gets|fgets)\s*\(\s*([^,)]+)/)) {
+            const m = line.match(/\b(?:cin\.getline|cin\.get|gets|fgets)\s*\(\s*([^,)]+)/);
+            const varName = m[1].trim();
+            const prompt = extractRecentPrompt(i) || (`Enter ${varName}:`);
+            inputs.push({
+                type: 'line',
+                variable: varName,
+                label: prompt,
+                line: i + 1,
+                placeholder: `String line for ${varName}`
+            });
+        }
+        // 4. getch() / getche() / getchar()
+        else if (line.match(/\b(getch|getche|getchar)\s*\(\s*\)/)) {
+            const prompt = extractRecentPrompt(i) || 'Press any key to exit...';
+            inputs.push({
+                type: 'getch',
+                variable: 'key',
+                label: prompt,
+                line: i + 1,
+                placeholder: '\\n (Enter key)',
+                defaultValue: '\\n'
+            });
+        }
+    }
+
+    return inputs;
+}
+
+/**
+ * Dedicated output channel and pseudoterminal for noise-free output
+ */
+let ptyTerminal = null;
+let ptyWriteEmitter = null;
+let outputChannel = null;
+
+function getOutputChannel() {
+    if (!outputChannel) {
+        outputChannel = vscode.window.createOutputChannel('TurboVs Output');
+    }
+    return outputChannel;
+}
+
+function ensurePtyTerminal() {
+    const existing = vscode.window.terminals.find(t => t.name === 'TurboVs');
+    if (existing && ptyWriteEmitter) {
+        return existing;
+    }
+
+    ptyWriteEmitter = new vscode.EventEmitter();
+    const pty = {
+        onDidWrite: ptyWriteEmitter.event,
+        open: () => {},
+        close: () => {
+            ptyTerminal = null;
+            ptyWriteEmitter = null;
+        },
+        handleInput: (data) => {
+            if (data === '\x03') { // Ctrl+C
+                stopTurboCpp();
+            }
+        }
+    };
+
+    ptyTerminal = vscode.window.createTerminal({
+        name: 'TurboVs',
+        iconPath: new vscode.ThemeIcon('terminal'),
+        pty
+    });
+
+    return ptyTerminal;
+}
+
+/**
  * Syncs input text to TC_IN.TXT in current workspace directory
  */
 function syncInputToDisk(text) {
@@ -648,12 +822,48 @@ function syncInputToDisk(text) {
 }
 
 /**
- * Command: Open Dedicated Input / Output Webview Panel
+ * Refresh inputs in the I/O webview if open
+ */
+function refreshIoPanel(editor) {
+    if (!ioWebviewPanel || !editor) return;
+    const doc = editor.document;
+    const code = doc.getText();
+    const detected = detectScriptInputs(code);
+    const fileName = path.basename(doc.fileName);
+    ioWebviewPanel.webview.postMessage({
+        command: 'updateScriptContext',
+        fileName,
+        detected
+    });
+}
+
+/**
+ * Command: Open Dedicated Input Panel (Separate Input Fields)
  * @param {vscode.ExtensionContext} context
  */
-function openIoPanel(context) {
+function openInputPanel(context) {
+    return openIoPanel(context, 'form');
+}
+
+/**
+ * Command: Open Dedicated Input / Output Webview Panel
+ * @param {vscode.ExtensionContext} context
+ * @param {'form'|'raw'} preferredTab
+ */
+function openIoPanel(context, preferredTab = 'form') {
+    const editor = vscode.window.activeTextEditor;
+    const code = editor ? editor.document.getText() : '';
+    const activeFileName = editor ? path.basename(editor.document.fileName) : 'active_program.cpp';
+    const detectedInputs = detectScriptInputs(code);
+
     if (ioWebviewPanel) {
         ioWebviewPanel.reveal(vscode.ViewColumn.Beside);
+        ioWebviewPanel.webview.postMessage({
+            command: 'updateScriptContext',
+            fileName: activeFileName,
+            detected: detectedInputs,
+            activeTab: preferredTab
+        });
         return ioWebviewPanel;
     }
 
@@ -668,7 +878,6 @@ function openIoPanel(context) {
     );
 
     // If currentCustomInput is not yet set, inspect active workspace for TC_IN.TXT or input.txt
-    const editor = vscode.window.activeTextEditor;
     if (!currentCustomInput && editor) {
         const dir = path.dirname(editor.document.fileName);
         const inTxt = path.join(dir, 'TC_IN.TXT');
@@ -686,7 +895,7 @@ function openIoPanel(context) {
         }
     }
 
-    ioWebviewPanel.webview.html = getIoWebviewHtml(currentCustomInput, lastProgramOutput);
+    ioWebviewPanel.webview.html = getIoWebviewHtml(currentCustomInput, lastProgramOutput, detectedInputs, activeFileName, preferredTab);
 
     ioWebviewPanel.webview.onDidReceiveMessage(async message => {
         switch (message.command) {
@@ -718,6 +927,47 @@ function openIoPanel(context) {
     });
 
     return ioWebviewPanel;
+}
+
+/**
+ * Command: Check how many inputs are in the active script
+ * @param {vscode.ExtensionContext} context
+ */
+async function checkScriptInputsPrompt(context) {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        vscode.window.showWarningMessage('TurboVs: Please open a C/C++ file to analyze its inputs.');
+        return;
+    }
+
+    const doc = editor.document;
+    const fileName = path.basename(doc.fileName);
+    const code = doc.getText();
+    const detected = detectScriptInputs(code);
+
+    if (detected.length === 0) {
+        const choice = await vscode.window.showInformationMessage(
+            `TurboVs: No stdin inputs (cin/scanf/getch) detected in "${fileName}". Program can run without input.`,
+            'Run Program',
+            'Open Input Panel'
+        );
+        if (choice === 'Run Program') vscode.commands.executeCommand('turbovs.run');
+        if (choice === 'Open Input Panel') openInputPanel(context);
+        return;
+    }
+
+    const summary = detected.map((d, i) => `${i + 1}. [${d.type}] ${d.variable}: "${d.label}"`).join('\n');
+    const choice = await vscode.window.showInformationMessage(
+        `TurboVs: Detected ${detected.length} input(s) in "${fileName}":\n${summary}`,
+        'Open Input Panel',
+        'Run Program'
+    );
+
+    if (choice === 'Open Input Panel') {
+        openInputPanel(context);
+    } else if (choice === 'Run Program') {
+        vscode.commands.executeCommand('turbovs.run');
+    }
 }
 
 /**
@@ -756,11 +1006,11 @@ async function setInputPrompt(context) {
 
         const choice = await vscode.window.showInformationMessage(
             'TurboVs: Program input saved. It will be piped on next run.',
-            'Open I/O Panel',
+            'Open Input Panel',
             'Run Program'
         );
-        if (choice === 'Open I/O Panel') {
-            openIoPanel(context);
+        if (choice === 'Open Input Panel') {
+            openInputPanel(context);
         } else if (choice === 'Run Program') {
             vscode.commands.executeCommand('turbovs.run');
         }
@@ -768,20 +1018,22 @@ async function setInputPrompt(context) {
 }
 
 /**
- * Generate HTML for the I/O webview panel
+ * Generate HTML for the I/O webview panel with separate input fields per detected input
  */
-function getIoWebviewHtml(initialInput, initialOutput) {
-    const escapedInput = escapeHtml(initialInput || '');
+function getIoWebviewHtml(initialInput, initialOutput, detectedInputs = [], activeFileName = 'Program', initialTab = 'form') {
+    const escapedFileName = escapeHtml(activeFileName);
     const hasOutput = initialOutput && initialOutput.trim().length > 0;
     const escapedOutput = hasOutput ? escapeHtml(initialOutput) : 'Program output will appear here after execution...';
     const outputClass = hasOutput ? 'output-box' : 'output-box empty';
+    const jsonDetected = JSON.stringify(detectedInputs || []);
+    const escapedInitialInput = escapeHtml(initialInput || '');
 
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>TurboVs I/O</title>
+<title>TurboVs I/O - Input &amp; Output</title>
 <style>
   :root {
     --bg-color: var(--vscode-editor-background, #1e1e1e);
@@ -798,6 +1050,8 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     --border-color: var(--vscode-panel-border, #333333);
     --badge-bg: var(--vscode-badge-background, #4d4d4d);
     --badge-fg: var(--vscode-badge-foreground, #ffffff);
+    --card-bg: var(--vscode-editorWidget-background, #252526);
+    --card-border: var(--vscode-editorWidget-border, #333333);
     --font-mono: var(--vscode-editor-font-family, 'Courier New', Courier, monospace);
     --font-sans: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   }
@@ -806,7 +1060,7 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     color: var(--fg-color);
     font-family: var(--font-sans);
     margin: 0;
-    padding: 14px 16px;
+    padding: 12px 16px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -817,19 +1071,24 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-bottom: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border-color);
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     flex-shrink: 0;
   }
   .title-group {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
   }
-  .title {
+  .logo-title {
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .badge {
     font-size: 11px;
@@ -838,6 +1097,15 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     background: var(--badge-bg);
     color: var(--badge-fg);
     font-weight: 500;
+  }
+  .badge.file-badge {
+    background: #1f4f7a;
+    color: #e0f0ff;
+  }
+  .badge.count-badge {
+    background: #2b3a4a;
+    color: #4dc4ff;
+    border: 1px solid #1f4f7a;
   }
   .badge.running {
     background: #e5a50a;
@@ -868,6 +1136,7 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     display: inline-flex;
     align-items: center;
     gap: 5px;
+    user-select: none;
   }
   button:hover {
     background-color: var(--btn-hover);
@@ -883,6 +1152,28 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     opacity: 0.5;
     cursor: not-allowed;
   }
+  .tab-bar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+    align-items: center;
+  }
+  .tab-btn {
+    background: transparent;
+    color: var(--fg-color);
+    opacity: 0.7;
+    border: 1px solid transparent;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tab-btn.active {
+    background: var(--card-bg);
+    border-color: var(--border-color);
+    opacity: 1;
+    font-weight: 600;
+  }
   .panels-container {
     display: flex;
     flex-direction: column;
@@ -890,39 +1181,103 @@ function getIoWebviewHtml(initialInput, initialOutput) {
     flex: 1;
     min-height: 0;
   }
-  .section {
+  .input-panel {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 10px;
   }
-  .section-header {
+  .fields-scroll {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+    min-height: 0;
+  }
+  .input-card {
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .input-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 6px;
+  }
+  .input-card-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: #4dc4ff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .input-card-prompt {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--fg-color);
+  }
+  .input-field {
+    width: 100%;
+    background: var(--bg-color);
+    color: var(--input-fg);
+    border: 1px solid var(--input-border);
+    border-radius: 3px;
+    padding: 6px 8px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    box-sizing: border-box;
+    outline: none;
+  }
+  .input-field:focus {
+    border-color: var(--btn-bg);
+  }
+  .remove-field-btn {
+    background: transparent;
+    color: #ff6b6b;
+    padding: 2px 6px;
+    font-size: 11px;
+    opacity: 0.7;
+  }
+  .remove-field-btn:hover {
+    opacity: 1;
+    background: rgba(255, 107, 107, 0.1);
+  }
+  .add-field-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 8px;
     flex-shrink: 0;
   }
-  .section-title {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-color);
-    opacity: 0.9;
-  }
-  .section-subtitle {
+  .preview-bar {
     font-size: 11px;
+    color: var(--fg-color);
     opacity: 0.6;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
   }
   textarea {
     flex: 1;
     width: 100%;
-    background-color: var(--input-bg);
+    background-color: var(--bg-color);
     color: var(--input-fg);
     border: 1px solid var(--input-border);
     border-radius: 4px;
-    padding: 10px;
+    padding: 8px;
     font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.4;
@@ -933,109 +1288,313 @@ function getIoWebviewHtml(initialInput, initialOutput) {
   textarea:focus {
     border-color: var(--btn-bg);
   }
+  .output-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .output-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+  }
+  .output-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-color);
+  }
   .output-box {
     flex: 1;
     width: 100%;
-    background-color: var(--input-bg);
-    color: var(--input-fg);
+    background-color: #0d1117;
+    color: #58a6ff;
     border: 1px solid var(--input-border);
     border-radius: 4px;
     padding: 10px;
     font-family: var(--font-mono);
     font-size: 13px;
-    line-height: 1.4;
+    line-height: 1.45;
     overflow-y: auto;
     box-sizing: border-box;
     white-space: pre-wrap;
     word-break: break-word;
     user-select: text;
+    margin: 0;
   }
   .output-box.empty {
-    opacity: 0.5;
+    color: #8b949e;
     font-style: italic;
   }
   .time-badge {
     font-size: 11px;
-    opacity: 0.7;
+    opacity: 0.8;
     margin-left: 6px;
+    color: #3fb950;
   }
 </style>
 </head>
 <body>
   <div class="header">
     <div class="title-group">
-      <span class="title">TurboVs I/O</span>
+      <span class="logo-title">⚡ TurboVs</span>
+      <span id="fileBadge" class="badge file-badge">📄 ${escapedFileName}</span>
+      <span id="countBadge" class="badge count-badge">📝 ${detectedInputs.length} Inputs Detected</span>
       <span id="statusBadge" class="badge">Ready</span>
       <span id="timeBadge" class="time-badge"></span>
     </div>
     <div class="actions">
       <button id="runBtn" title="Run Current Program (Ctrl+F9)">▶ Run Program</button>
-      <button id="clearInputBtn" class="secondary" title="Clear stdin input">Clear Input</button>
-      <button id="clearOutputBtn" class="secondary" title="Clear stdout output">Clear Output</button>
+      <button id="clearAllBtn" class="secondary" title="Clear all inputs and outputs">Clear All</button>
     </div>
   </div>
 
   <div class="panels-container">
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Input (stdin)</span>
-        <span class="section-subtitle">Values piped to cin / scanf (one per line)</span>
+    <div class="input-panel">
+      <div class="tab-bar">
+        <button id="tabFormBtn" class="tab-btn active">📋 Separate Input Fields (<span id="tabCount">${detectedInputs.length}</span>)</button>
+        <button id="tabRawBtn" class="tab-btn">📝 Raw Multiline Stdin</button>
       </div>
-      <textarea id="stdinInput" placeholder="Enter input values here (one per line).&#10;Example:&#10;Alice&#10;25">${escapedInput}</textarea>
+
+      <!-- Mode 1: Separate Fields for Each Detected Input -->
+      <div id="formModeContainer" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+        <div id="fieldsScroll" class="fields-scroll"></div>
+        <div class="add-field-row">
+          <button id="addFieldBtn" class="secondary" style="font-size: 11px; padding: 3px 8px;">+ Add Input Field</button>
+          <span id="previewBar" class="preview-bar"></span>
+        </div>
+      </div>
+
+      <!-- Mode 2: Raw Multiline Textarea -->
+      <div id="rawModeContainer" style="display: none; flex-direction: column; flex: 1; min-height: 0;">
+        <textarea id="stdinInput" class="rawTextarea" placeholder="Enter input values here (one per line)...">${escapedInitialInput}</textarea>
+      </div>
     </div>
 
-    <div class="section">
-      <div class="section-header">
-        <span class="section-title">Output (stdout)</span>
-        <button id="copyBtn" class="secondary" style="padding: 2px 8px; font-size: 11px;">Copy Output</button>
+    <div class="output-panel">
+      <div class="output-header">
+        <span class="output-title">Program Output (Pure Stdout)</span>
+        <button id="copyBtn" class="secondary" style="padding: 2px 8px; font-size: 11px;">📋 Copy Output</button>
       </div>
-      <div id="stdoutOutput" class="${outputClass}">${escapedOutput}</div>
+      <pre id="stdoutOutput" class="${outputClass}">${escapedOutput}</pre>
     </div>
   </div>
 
   <script>
     const vscode = acquireVsCodeApi();
-    const stdinInput = document.getElementById('stdinInput');
-    const stdoutOutput = document.getElementById('stdoutOutput');
+
+    let detectedInputs = ${jsonDetected};
+    let currentInputs = [];
+    let isRawMode = false;
+
+    const fileBadge = document.getElementById('fileBadge');
+    const countBadge = document.getElementById('countBadge');
     const statusBadge = document.getElementById('statusBadge');
     const timeBadge = document.getElementById('timeBadge');
     const runBtn = document.getElementById('runBtn');
-    const clearInputBtn = document.getElementById('clearInputBtn');
-    const clearOutputBtn = document.getElementById('clearOutputBtn');
+    const clearAllBtn = document.getElementById('clearAllBtn');
+    const tabFormBtn = document.getElementById('tabFormBtn');
+    const tabRawBtn = document.getElementById('tabRawBtn');
+    const formModeContainer = document.getElementById('formModeContainer');
+    const rawModeContainer = document.getElementById('rawModeContainer');
+    const fieldsScroll = document.getElementById('fieldsScroll');
+    const addFieldBtn = document.getElementById('addFieldBtn');
+    const previewBar = document.getElementById('previewBar');
+    const rawTextarea = document.getElementById('stdinInput');
+    const stdinInput = rawTextarea;
+    const stdoutOutput = document.getElementById('stdoutOutput');
     const copyBtn = document.getElementById('copyBtn');
+    const tabCount = document.getElementById('tabCount');
 
-    // Handle Tab key in textarea
-    stdinInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Tab') {
-        e.preventDefault();
-        const start = stdinInput.selectionStart;
-        const end = stdinInput.selectionEnd;
-        stdinInput.value = stdinInput.value.substring(0, start) + '    ' + stdinInput.value.substring(end);
-        stdinInput.selectionStart = stdinInput.selectionEnd = start + 4;
-        vscode.postMessage({ command: 'updateInput', text: stdinInput.value });
+    // Parse initial input lines into separate fields
+    function initFieldsFromData() {
+      const initialRaw = rawTextarea.value;
+      const rawLines = initialRaw.split(/\\r?\\n/).filter((_, idx, arr) => idx < arr.length - 1 || _ !== '');
+
+      currentInputs = [];
+      if (detectedInputs && detectedInputs.length > 0) {
+        detectedInputs.forEach((det, idx) => {
+          const val = rawLines[idx] !== undefined ? rawLines[idx] : (det.defaultValue || '');
+          currentInputs.push({
+            type: det.type,
+            variable: det.variable,
+            label: det.label,
+            placeholder: det.placeholder || ('Value for ' + det.variable),
+            value: val
+          });
+        });
+        // If raw has more lines than detected
+        for (let i = detectedInputs.length; i < rawLines.length; i++) {
+          currentInputs.push({
+            type: 'extra',
+            variable: 'input_' + (i + 1),
+            label: 'Extra Input #' + (i + 1),
+            placeholder: 'Value',
+            value: rawLines[i]
+          });
+        }
+      } else if (rawLines.length > 0) {
+        rawLines.forEach((l, idx) => {
+          currentInputs.push({
+            type: 'input',
+            variable: 'in_' + (idx + 1),
+            label: 'Input #' + (idx + 1),
+            placeholder: 'Value',
+            value: l
+          });
+        });
+      } else {
+        currentInputs.push({
+          type: 'input',
+          variable: 'in_1',
+          label: 'Input #1',
+          placeholder: 'Value for input',
+          value: ''
+        });
       }
+      renderFields();
+    }
+
+    function renderFields() {
+      fieldsScroll.innerHTML = '';
+      tabCount.textContent = currentInputs.length;
+      countBadge.textContent = '📝 ' + currentInputs.length + ' Inputs Configured';
+
+      currentInputs.forEach((item, index) => {
+        const card = document.createElement('div');
+        card.className = 'input-card';
+
+        const cardHeader = document.createElement('div');
+        cardHeader.className = 'input-card-header';
+
+        const title = document.createElement('span');
+        title.className = 'input-card-title';
+        title.textContent = 'Input #' + (index + 1) + ' · ' + (item.type || 'cin') + (item.variable ? (' >> ' + item.variable) : '');
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-field-btn';
+        removeBtn.textContent = '✕';
+        removeBtn.title = 'Remove field';
+        removeBtn.addEventListener('click', () => {
+          currentInputs.splice(index, 1);
+          renderFields();
+          syncRawFromFields();
+        });
+
+        cardHeader.appendChild(title);
+        cardHeader.appendChild(removeBtn);
+
+        const promptLabel = document.createElement('label');
+        promptLabel.className = 'input-card-prompt';
+        promptLabel.textContent = item.label || ('Enter input #' + (index + 1) + ':');
+
+        const inputEl = document.createElement('input');
+        inputEl.type = 'text';
+        inputEl.className = 'input-field';
+        inputEl.placeholder = item.placeholder || 'Enter value';
+        inputEl.value = item.value || '';
+        inputEl.addEventListener('input', (e) => {
+          item.value = e.target.value;
+          syncRawFromFields();
+        });
+
+        card.appendChild(cardHeader);
+        card.appendChild(promptLabel);
+        card.appendChild(inputEl);
+
+        fieldsScroll.appendChild(card);
+      });
+
+      updatePreview();
+    }
+
+    function syncRawFromFields() {
+      const combined = currentInputs.map(i => i.value).join('\\n');
+      rawTextarea.value = combined;
+      updatePreview();
+      vscode.postMessage({ command: 'updateInput', text: combined });
+    }
+
+    function syncFieldsFromRaw() {
+      const lines = rawTextarea.value.split(/\\r?\\n/);
+      currentInputs = lines.map((line, idx) => {
+        const existing = currentInputs[idx];
+        return {
+          type: existing ? existing.type : 'input',
+          variable: existing ? existing.variable : ('in_' + (idx + 1)),
+          label: existing ? existing.label : ('Input #' + (idx + 1)),
+          placeholder: 'Value',
+          value: line
+        };
+      });
+      renderFields();
+      vscode.postMessage({ command: 'updateInput', text: rawTextarea.value });
+    }
+
+    function updatePreview() {
+      const tokens = currentInputs.map(i => i.value !== '' ? i.value : '(empty)');
+      previewBar.textContent = 'Piped: [ ' + tokens.join(' ] ↵ [ ') + ' ]';
+    }
+
+    // Add Field button
+    addFieldBtn.addEventListener('click', () => {
+      const nextIdx = currentInputs.length + 1;
+      currentInputs.push({
+        type: 'custom',
+        variable: 'in_' + nextIdx,
+        label: 'Custom Input #' + nextIdx,
+        placeholder: 'Value',
+        value: ''
+      });
+      renderFields();
+      syncRawFromFields();
     });
 
-    // Notify extension when input changes
-    stdinInput.addEventListener('input', () => {
-      vscode.postMessage({ command: 'updateInput', text: stdinInput.value });
+    // Tab Switching
+    tabFormBtn.addEventListener('click', () => {
+      isRawMode = false;
+      tabFormBtn.classList.add('active');
+      tabRawBtn.classList.remove('active');
+      formModeContainer.style.display = 'flex';
+      rawModeContainer.style.display = 'none';
+      syncFieldsFromRaw();
+    });
+
+    tabRawBtn.addEventListener('click', () => {
+      isRawMode = true;
+      tabRawBtn.classList.add('active');
+      tabFormBtn.classList.remove('active');
+      rawModeContainer.style.display = 'flex';
+      formModeContainer.style.display = 'none';
+    });
+
+    rawTextarea.addEventListener('input', () => {
+      updatePreview();
+      vscode.postMessage({ command: 'updateInput', text: rawTextarea.value });
     });
 
     runBtn.addEventListener('click', () => {
       vscode.postMessage({ command: 'run' });
     });
 
-    clearInputBtn.addEventListener('click', () => {
-      stdinInput.value = '';
-      vscode.postMessage({ command: 'clearInput' });
-    });
-
-    clearOutputBtn.addEventListener('click', () => {
+    clearAllBtn.addEventListener('click', () => {
+      currentInputs = [];
+      rawTextarea.value = '';
+      renderFields();
       stdoutOutput.textContent = 'Program output will appear here after execution...';
       stdoutOutput.classList.add('empty');
       statusBadge.textContent = 'Ready';
       statusBadge.className = 'badge';
       timeBadge.textContent = '';
+      vscode.postMessage({ command: 'clearInput' });
       vscode.postMessage({ command: 'clearOutput' });
     });
 
@@ -1044,11 +1603,15 @@ function getIoWebviewHtml(initialInput, initialOutput) {
       vscode.postMessage({ command: 'copyOutput', text });
     });
 
-    // Handle incoming messages from extension
+    // Handle messages from VS Code extension
     window.addEventListener('message', event => {
       const msg = event.data;
-      if (msg.command === 'setInput') {
-        stdinInput.value = msg.text || '';
+      if (msg.command === 'updateScriptContext') {
+        if (msg.fileName) fileBadge.textContent = '📄 ' + msg.fileName;
+        if (msg.detected) {
+          detectedInputs = msg.detected;
+          initFieldsFromData();
+        }
       } else if (msg.command === 'setRunning') {
         runBtn.disabled = true;
         statusBadge.textContent = 'Running...';
@@ -1075,6 +1638,9 @@ function getIoWebviewHtml(initialInput, initialOutput) {
         }
       }
     });
+
+    // Initialize fields on load
+    initFieldsFromData();
   </script>
 </body>
 </html>`;
@@ -1196,6 +1762,10 @@ async function runTurboCpp(context) {
     executionStartTime = Date.now();
 
     // Determine input to pass to stdin
+    // Check script first to detect how many inputs are needed
+    const scriptCode = document.getText();
+    const detectedInputs = detectScriptInputs(scriptCode);
+
     let inputVal = currentCustomInput;
     if (!inputVal) {
         const candidateIn = path.join(workspaceHostDir, 'TC_IN.TXT');
@@ -1215,6 +1785,11 @@ async function runTurboCpp(context) {
         if (!inputVal) {
             inputVal = getSetting('defaultInput', '');
         }
+        // If still no input configured, but script has detected inputs, generate safe default values so program doesn't hang
+        if (!inputVal && detectedInputs.length > 0) {
+            inputVal = detectedInputs.map(item => item.defaultValue || '0').join('\n');
+            currentCustomInput = inputVal;
+        }
     }
 
     const hostInTxt = path.join(workspaceHostDir, 'TC_IN.TXT');
@@ -1232,7 +1807,8 @@ async function runTurboCpp(context) {
         ioWebviewPanel.webview.postMessage({
             command: 'setRunning',
             running: true,
-            fileName: originalFileName
+            fileName: originalFileName,
+            detected: detectedInputs
         });
     }
 
@@ -1297,24 +1873,11 @@ exit
         return;
     }
 
-    // 7. Setup VS Code Integrated Terminal
-    let terminal = vscode.window.terminals.find(t => t.name === 'TurboVs');
-    if (!terminal) {
-        terminal = vscode.window.createTerminal({
-            name: 'TurboVs',
-            iconPath: new vscode.ThemeIcon('terminal'),
-            env: {
-                DISPLAY: process.env.DISPLAY || ':0',
-                SDL_AUDIODRIVER: 'dummy',
-                ALSA_CARD: 'none'
-            }
-        });
+    // 7. Setup VS Code Integrated Terminal using Pseudoterminal (only pure script output, zero bash/cmd noise)
+    const terminal = ensurePtyTerminal();
+    if (getSetting('autoClearTerminal', true) && ptyWriteEmitter) {
+        ptyWriteEmitter.fire('\x1b[2J\x1b[0;0H');
     }
-
-    if (getSetting('autoClearTerminal', true)) {
-        terminal.sendText(process.platform === 'win32' ? 'cls' : 'clear');
-    }
-
     terminal.show(true);
 
     // 8. Build launch command line with all DOSBox banners silenced (> /dev/null 2>&1)
@@ -1326,19 +1889,31 @@ exit
 
     let launchCmd = '';
     if (process.platform === 'win32') {
-        launchCmd = `${dosboxExec} >nul 2>&1 & if exist "${hostOutLog}" type "${hostOutLog}"`;
+        launchCmd = `${dosboxExec} >nul 2>&1`;
     } else {
         const hasXvfb = cp.spawnSync('which', ['xvfb-run']).status === 0;
         const prefix = hasXvfb ? 'xvfb-run -a ' : '';
-        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none ${prefix}${dosboxExec} >/dev/null 2>&1; if [ -f "${hostOutLog}" ]; then cat "${hostOutLog}"; fi`;
+        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none ${prefix}${dosboxExec} >/dev/null 2>&1`;
     }
 
     // 9. Update state & status bar
     isProgramRunning = true;
     updateStatusBar();
 
-    // 10. Execute in terminal
-    terminal.sendText(launchCmd);
+    // 10. Execute in background process so terminal is not cluttered with bash commands
+    const execTimeoutSec = getSetting('executionTimeout', 15);
+    activeProcess = cp.exec(launchCmd, {
+        env: {
+            ...process.env,
+            SDL_AUDIODRIVER: 'dummy',
+            ALSA_CARD: 'none',
+            DISPLAY: process.env.DISPLAY || ':0'
+        },
+        timeout: (execTimeoutSec + 5) * 1000,
+        windowsHide: true
+    }, (err) => {
+        activeProcess = null;
+    });
 
     // 11. Monitor compilation logs & update Diagnostics in VS Code editor
     monitorCompilation(workspaceHostDir, document, isTempAlias ? targetDosFileName : originalFileName, context);
@@ -1368,6 +1943,20 @@ function monitorCompilation(workspaceDir, document, compiledName, context) {
                     lastProgramOutput = content;
                     const isError = content.includes('[TurboVs] Compilation Failed!');
 
+                    // Format clean output for terminal (\r\n)
+                    const termContent = content.replace(/\r?\n/g, '\r\n');
+                    if (ptyWriteEmitter) {
+                        ptyWriteEmitter.fire(termContent + (termContent.endsWith('\r\n') ? '' : '\r\n'));
+                    } else if (ptyTerminal && typeof ptyTerminal.sendText === 'function') {
+                        ptyTerminal.sendText(content);
+                    }
+
+                    // Output to OutputChannel
+                    const outChan = getOutputChannel();
+                    outChan.clear();
+                    outChan.append(content);
+
+                    // Output to Webview Panel
                     if (ioWebviewPanel) {
                         ioWebviewPanel.webview.postMessage({
                             command: 'setOutput',
@@ -1388,10 +1977,16 @@ function monitorCompilation(workspaceDir, document, compiledName, context) {
             clearInterval(timer);
             if (!handled) {
                 diagnosticCollection.set(document.uri, []);
+                const timeoutMsg = `[TurboVs] Execution timed out after ${timeoutSec} seconds. (Infinite loop or waiting for input?)`;
+                if (ptyWriteEmitter) {
+                    ptyWriteEmitter.fire(`\r\n${timeoutMsg}\r\n`);
+                }
+                const outChan = getOutputChannel();
+                outChan.appendLine(timeoutMsg);
                 if (ioWebviewPanel) {
                     ioWebviewPanel.webview.postMessage({
                         command: 'setOutput',
-                        text: `[TurboVs] Execution timed out after ${timeoutSec} seconds. (Infinite loop or waiting for input?)`,
+                        text: timeoutMsg,
                         status: 'error',
                         duration: `${timeoutSec}.00`,
                         fileName: compiledName
@@ -1576,10 +2171,20 @@ exit
  * Command: Stop Turbo C++ / DOSBox process
  */
 async function stopTurboCpp() {
-    // 1. Send Ctrl+C to terminal
+    if (activeProcess) {
+        try {
+            activeProcess.kill('SIGKILL');
+        } catch (_) {}
+        activeProcess = null;
+    }
+
+    // 1. Send Ctrl+C or stop notification to terminal
     const terminal = vscode.window.terminals.find(t => t.name === 'TurboVs');
-    if (terminal) {
+    if (terminal && !ptyWriteEmitter) {
         terminal.sendText('\x03'); // Send SIGINT
+    }
+    if (ptyWriteEmitter) {
+        ptyWriteEmitter.fire('\r\n[TurboVs] Execution stopped.\r\n');
     }
 
     // 2. Kill DOSBox process
@@ -1625,7 +2230,11 @@ module.exports = {
     parseCompilerOutput,
     getSetting,
     openIoPanel,
+    openInputPanel,
+    checkScriptInputsPrompt,
+    detectScriptInputs,
     setInputPrompt,
     getIoWebviewHtml,
-    escapeHtml
+    escapeHtml,
+    ensurePtyTerminal
 };
