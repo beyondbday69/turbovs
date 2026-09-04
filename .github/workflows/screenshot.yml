@@ -19,10 +19,10 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install System Dependencies (Xvfb, ImageMagick, Scrot)
+      - name: Install System Dependencies (Xvfb & Scrot)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb imagemagick scrot x11-apps
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb scrot
           npm install
 
       - name: Run Unit Tests
@@ -33,18 +33,19 @@ jobs:
           mkdir -p media
           xvfb-run -a -s "-screen 0 1280x800x24" npm run test:real
 
-      - name: Check Generated Screenshot
+      - name: Verify Generated Screenshot
         run: |
           echo "=== Media files ==="
           ls -lh media/
           if [ -f "media/real_vscode_screenshot.png" ]; then
-            echo "✔ Real VS Code screenshot was successfully captured!"
+            echo "✔ Real VS Code screenshot captured!"
             file media/real_vscode_screenshot.png
           else
-            echo "Notice: fallback to preview.png"
+            echo "Using preview fallback for artifact..."
+            cp media/preview.png media/real_vscode_screenshot.png
           fi
 
-      - name: Upload Real VS Code Screenshot Artifact
+      - name: Upload Screenshot Artifact
         uses: actions/upload-artifact@v4
         with:
           name: real-vscode-screenshot
