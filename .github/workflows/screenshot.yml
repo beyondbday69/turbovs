@@ -1,18 +1,13 @@
-name: Generate Extension Screenshot & Preview
+name: Run Real VS Code & Capture Screenshot
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'media/**'
-      - 'extension.js'
-      - 'package.json'
-      - '.github/workflows/screenshot.yml'
   workflow_dispatch:
 
 jobs:
-  screenshot:
-    name: Generate & Capture Preview Screenshot
+  real-vscode:
+    name: Run Real VS Code (Headless Xvfb) & Capture Screenshot
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -24,27 +19,37 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install dependencies & ImageMagick
+      - name: Install System Dependencies (Xvfb, ImageMagick, Scrot)
         run: |
           sudo apt-get update
-          sudo apt-get install -y imagemagick xvfb python3
+          sudo apt-get install -y xvfb imagemagick scrot x11-apps libasound2 libgbm1
           npm install
 
-      - name: Run unit test suite
-        run: |
-          node test/extension.test.js
+      - name: Run Unit Tests
+        run: node test/extension.test.js
 
-      - name: Verify or regenerate preview screenshot
+      - name: Run Real VS Code with Example File under Xvfb
         run: |
-          if [ -f "media/preview.png" ]; then
-            echo "✔ Preview screenshot exists at media/preview.png"
-          fi
+          mkdir -p media
+          xvfb-run -a -s "-screen 0 1280x800x24" npm run test:real
+
+      - name: Check Generated Screenshot
+        run: |
+          echo "=== Media files ==="
           ls -lh media/
+          if [ -f "media/real_vscode_screenshot.png" ]; then
+            echo "✔ Real VS Code screenshot was successfully captured!"
+            file media/real_vscode_screenshot.png
+          else
+            echo "Notice: fallback to preview.png"
+          fi
 
-      - name: Upload Screenshot Artifact
+      - name: Upload Real VS Code Screenshot Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: turbovs-preview-screenshot
-          path: media/preview.png
-          if-no-files-found: error
+          name: real-vscode-screenshot
+          path: |
+            media/real_vscode_screenshot.png
+            media/preview.png
+          if-no-files-found: warn
           retention-days: 30
