@@ -18,6 +18,8 @@ if ! pgrep -x "Xvfb" >/dev/null; then
     sleep 1
 fi
 export DISPLAY=:0
+export SDL_AUDIODRIVER=dummy
+export ALSA_CARD=none
 
 # 2. Start Window Manager & VNC Server
 echo "[2/6] Starting Window Manager & VNC Screen (Port $VNC_PORT)..."
@@ -49,6 +51,7 @@ cat << JSON_SETTINGS > "$USER_SETTINGS_DIR/settings.json"
 {
     "turbovs.dosboxPath": "/usr/bin/dosbox",
     "turbovs.compilerPath": "$HOME/turboc3",
+    "turbovs.disableAudio": true,
     "turbovs.autoClearTerminal": true,
     "turbovs.closeOnExit": true,
     "workbench.colorTheme": "Default Dark Modern",

@@ -66,6 +66,8 @@ jobs:
       - name: Start Cloud VS Code Server & Establish Public Tunnel
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SDL_AUDIODRIVER: dummy
+          ALSA_CARD: none
         run: |
           bash scripts/start-vscode-server.sh --daemon "$(pwd)/examples"
 

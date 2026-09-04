@@ -698,6 +698,7 @@ async function runTurboCpp(context) {
     const windowResolution = getSetting('windowResolution', '1024x768');
     const isFullscreen = windowResolution === 'fullscreen';
     const resolution = isFullscreen ? 'original' : windowResolution;
+    const disableAudio = getSetting('disableAudio', true);
 
     const compilerMount = formatMountPath(env.compiler.rootPath);
     const workspaceMount = formatMountPath(workspaceHostDir);
@@ -742,6 +743,24 @@ scaler=normal2x
 core=auto
 cputype=auto
 cycles=max
+
+[mixer]
+nosound=${disableAudio}
+
+[midi]
+mpu401=none
+mididevice=none
+
+[sblaster]
+sbtype=none
+
+[gus]
+gus=false
+
+[speaker]
+pcspeaker=false
+tandy=off
+disney=false
 
 [dos]
 xms=true
@@ -806,7 +825,9 @@ exit
             name: 'TurboVs',
             iconPath: new vscode.ThemeIcon('terminal'),
             env: {
-                DISPLAY: process.env.DISPLAY || ':0'
+                DISPLAY: process.env.DISPLAY || ':0',
+                SDL_AUDIODRIVER: 'dummy',
+                ALSA_CARD: 'none'
             }
         });
     }
@@ -828,8 +849,12 @@ exit
     if (extraArgs) {
         launchCmd += ` ${extraArgs}`;
     }
-    if (process.platform !== 'win32' && !process.env.DISPLAY) {
-        launchCmd = `DISPLAY=:0 ${launchCmd}`;
+
+    if (process.platform === 'win32') {
+        launchCmd = `${launchCmd} 2>nul`;
+    } else {
+        const displayEnv = process.env.DISPLAY || ':0';
+        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none DISPLAY="${displayEnv}" ${launchCmd} 2>/dev/null`;
     }
 
     // 9. Update state & status bar
@@ -977,6 +1002,24 @@ windowresolution=1024x768
 output=surface
 autolock=true
 
+[mixer]
+nosound=true
+
+[midi]
+mpu401=none
+mididevice=none
+
+[sblaster]
+sbtype=none
+
+[gus]
+gus=false
+
+[speaker]
+pcspeaker=false
+tandy=off
+disney=false
+
 [cpu]
 core=auto
 cycles=max
@@ -1005,11 +1048,27 @@ exit
 
     let terminal = vscode.window.terminals.find(t => t.name === 'TurboVs');
     if (!terminal) {
-        terminal = vscode.window.createTerminal('TurboVs');
+        terminal = vscode.window.createTerminal({
+            name: 'TurboVs',
+            iconPath: new vscode.ThemeIcon('terminal'),
+            env: {
+                DISPLAY: process.env.DISPLAY || ':0',
+                SDL_AUDIODRIVER: 'dummy',
+                ALSA_CARD: 'none'
+            }
+        });
     }
     terminal.show(true);
     terminal.sendText(`echo "[TurboVs] Launching Turbo C++ IDE in DOSBox..."`);
-    terminal.sendText(`"${env.dosbox.path}" -conf "${tempConfPath}"`);
+
+    let launchCmd = `"${env.dosbox.path}" -conf "${tempConfPath}"`;
+    if (process.platform === 'win32') {
+        launchCmd = `${launchCmd} 2>nul`;
+    } else {
+        const displayEnv = process.env.DISPLAY || ':0';
+        launchCmd = `SDL_AUDIODRIVER=dummy ALSA_CARD=none DISPLAY="${displayEnv}" ${launchCmd} 2>/dev/null`;
+    }
+    terminal.sendText(launchCmd);
 }
 
 /**

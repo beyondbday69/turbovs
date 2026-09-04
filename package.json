@@ -165,6 +165,11 @@
           "default": "",
           "description": "Additional command-line arguments to pass to DOSBox."
         },
+        "turbovs.disableAudio": {
+          "type": "boolean",
+          "default": true,
+          "description": "Disable sound hardware emulation in DOSBox (sets nosound=true, SDL_AUDIODRIVER=dummy) to prevent ALSA warnings and audio errors in headless/container environments."
+        },
         "turbovs.memoryModel": {
           "type": "string",
           "default": "default",
