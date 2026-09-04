@@ -2,6 +2,15 @@
 
 All notable changes to the "TurboVs" extension will be documented in this file.
 
+## [1.2.0] - 2026-09-04
+
+### Added
+- **Automatic VS Code Native Single Input Prompt**: When a program requires inputs (e.g. `cin >>`, `scanf`), TurboVs automatically opens the native VS Code input UI (`turbovs.autoPromptForInput`) with smart contextual prompt detection.
+- **Official VS Code Webview UI Toolkit & Codicons**: Replaced generic web components with official `@vscode/webview-ui-toolkit` (`<vscode-text-field>`, `<vscode-button>`, `<vscode-tag>`) and `@vscode/codicons` for seamless theme integration.
+- **Soft Pastel Minimalist Icon**: Updated extension branding with an elegant, modern pastel aesthetic.
+- **Cloud VS Code Server Workflow**: Run Turbo C++ in your browser on GitHub Actions with multi-provider tunnels (Pinggy, Localhost.run, Cloudflare).
+- **Automated GitHub Release & Publish Workflow**: Added GitHub Actions workflow to build, package `.vsix`, create GitHub Releases with changelogs, and publish to Visual Studio Marketplace & Open VSX.
+
 ## [1.1.0] - 2026-09-04
 
 ### Added
