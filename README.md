@@ -32,12 +32,17 @@ Many schools, universities, competitive programming curriculums, and retro devel
 
 ## 📸 What TurboVs Looks Like
 
+<div align="center">
+  <img src="media/real_vscode_screenshot.png" alt="Real VS Code running TurboVs in GitHub Actions" width="900" style="border-radius:8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);"/>
+  <p><em>Captured live in GitHub Actions CI: Real Visual Studio Code running TurboVs with <code>examples/hello.cpp</code> and TurboVs diagnostics</em></p>
+</div>
+
 As shown in the screenshot above:
 1. **Editor Tab**: Open any `.cpp` or `.c` file with classic syntax (`#include <iostream.h>`, `#include <conio.h>`, `void main()`, `clrscr()`).
 2. **Run/Play Button**: Click the **Run with TurboVs** (`$(play)`) button in the top right editor tab or press `Ctrl+F9`.
 3. **Integrated Terminal (`TurboVs`)**: The bottom panel opens a dedicated terminal displaying real-time build and launch status.
 4. **Authentic DOSBox Window**: The classic CRT blue console window opens, executing your program with full interactive keyboard input (`cin`, `getch()`) and screen graphics.
-5. **Status Bar**: The bottom status bar shows `⚡ TurboVs: Ready`.
+5. **Status Bar & Environment**: The status bar shows TurboVs status and diagnostics output channel.
 
 ---
 
