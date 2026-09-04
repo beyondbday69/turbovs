@@ -8,15 +8,18 @@ async function main() {
         const extensionTestsPath = path.resolve(__dirname, './suite/index');
         const testWorkspace = path.resolve(__dirname, '../examples');
 
-        // Launch real VS Code with custom window size
+        // Launch real VS Code with custom window size and Linux container flags
         await runTests({
             extensionDevelopmentPath,
             extensionTestsPath,
             launchArgs: [
                 testWorkspace,
+                '--no-sandbox',
+                '--disable-gpu-sandbox',
                 '--disable-gpu',
                 '--disable-telemetry',
                 '--disable-updates',
+                '--disable-workspace-trust',
                 '--window-size=1280,800'
             ]
         });
