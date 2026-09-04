@@ -30,7 +30,7 @@ async function run() {
             console.log('TurboVs extension activated successfully in real VS Code!');
         }
     } else {
-        console.log('Notice: Activating extension via command invocation...');
+        console.log('Notice: Extension loading via command invocation...');
     }
 
     // 3. Trigger Environment Check Command in real editor
@@ -74,6 +74,12 @@ async function run() {
     console.log('=======================================================');
     console.log('   REAL VS CODE TEST AND SCREENSHOT SEQUENCE COMPLETE  ');
     console.log('=======================================================');
+
+    // 6. Cleanly terminate Electron process so @vscode/test-electron completes
+    setTimeout(() => {
+        console.log('Exiting VS Code test process cleanly...');
+        process.exit(0);
+    }, 1500);
 }
 
 module.exports = { run };
