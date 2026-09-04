@@ -19,11 +19,13 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Install System Dependencies (Xvfb & Scrot)
+      - name: Install System Dependencies (Scrot)
         run: |
-          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb scrot
-          npm install
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends scrot || true
+
+      - name: Install Dependencies
+        run: npm install
 
       - name: Run Unit Tests
         run: node test/extension.test.js

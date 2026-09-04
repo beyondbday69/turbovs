@@ -480,16 +480,17 @@ async function checkEnvironment() {
     if (env.dosbox.valid && env.compiler.valid) {
         vscode.window.showInformationMessage('TurboVs environment is fully configured and ready!');
     } else {
-        const choice = await vscode.window.showErrorMessage(
+        vscode.window.showErrorMessage(
             'TurboVs environment is incomplete. Please configure missing components.',
             'Configure Settings',
             'Download Help'
-        );
-        if (choice === 'Configure Settings') {
-            configureSettings();
-        } else if (choice === 'Download Help') {
-            vscode.env.openExternal(vscode.Uri.parse('https://www.dosbox.com/download.php?main=1'));
-        }
+        ).then(choice => {
+            if (choice === 'Configure Settings') {
+                configureSettings();
+            } else if (choice === 'Download Help') {
+                vscode.env.openExternal(vscode.Uri.parse('https://www.dosbox.com/download.php?main=1'));
+            }
+        });
     }
 }
 

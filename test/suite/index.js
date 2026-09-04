@@ -33,10 +33,10 @@ async function run() {
         console.log('Notice: Extension loading via command invocation...');
     }
 
-    // 3. Trigger Environment Check Command in real editor
+    // 3. Trigger Environment Check Command in real editor (non-blocking)
     try {
         console.log('Executing turbovs.checkEnvironment command in real VS Code...');
-        await vscode.commands.executeCommand('turbovs.checkEnvironment');
+        vscode.commands.executeCommand('turbovs.checkEnvironment');
     } catch (e) {
         console.log('Command execution note:', e.message);
     }
@@ -76,10 +76,13 @@ async function run() {
     console.log('=======================================================');
 
     // 6. Cleanly terminate Electron process so @vscode/test-electron completes
-    setTimeout(() => {
-        console.log('Exiting VS Code test process cleanly...');
-        process.exit(0);
-    }, 1500);
+    await new Promise(resolve => {
+        setTimeout(() => {
+            console.log('Exiting VS Code test process cleanly...');
+            resolve();
+            setTimeout(() => process.exit(0), 1000);
+        }, 1500);
+    });
 }
 
 module.exports = { run };
