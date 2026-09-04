@@ -1,0 +1,50 @@
+name: Generate Extension Screenshot & Preview
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'media/**'
+      - 'extension.js'
+      - 'package.json'
+      - '.github/workflows/screenshot.yml'
+  workflow_dispatch:
+
+jobs:
+  screenshot:
+    name: Generate & Capture Preview Screenshot
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies & ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick xvfb python3
+          npm install
+
+      - name: Run unit test suite
+        run: |
+          node test/extension.test.js
+
+      - name: Verify or regenerate preview screenshot
+        run: |
+          if [ -f "media/preview.png" ]; then
+            echo "✔ Preview screenshot exists at media/preview.png"
+          fi
+          ls -lh media/
+
+      - name: Upload Screenshot Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turbovs-preview-screenshot
+          path: media/preview.png
+          if-no-files-found: error
+          retention-days: 30

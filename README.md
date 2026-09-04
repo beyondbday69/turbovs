@@ -1,10 +1,20 @@
 # TurboVs — Turbo C++ for Visual Studio Code
 
+<div align="center">
+
+[![CI](https://github.com/beyondbday69/turbovs/actions/workflows/ci.yml/badge.svg)](https://github.com/beyondbday69/turbovs/actions)
+[![Screenshot](https://github.com/beyondbday69/turbovs/actions/workflows/screenshot.yml/badge.svg)](https://github.com/beyondbday69/turbovs/actions)
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-orange.svg)](#)
 
-Write and run legacy **Turbo C++ 3.0** and **Borland C++** programs directly from Visual Studio Code using **DOSBox** or **DOSBox-X**!
+<br/>
+
+<img src="media/preview.png" alt="TurboVs in Action" width="900" style="border-radius:8px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);"/>
+
+<p><em>Visual Studio Code running legacy Turbo C++ code interactively with the TurboVs extension and DOSBox CRT display</em></p>
+
+</div>
 
 ---
 
@@ -20,30 +30,14 @@ Many schools, universities, competitive programming curriculums, and retro devel
 
 ---
 
-## ✨ Key Features
+## 📸 What TurboVs Looks Like
 
-- **🎮 Authentic Turbo C++ Compatibility**:
-  - Full support for `#include <iostream.h>`, `#include <conio.h>`, `#include <graphics.h>`, `#include <dos.h>`.
-  - Supports `void main()`, `clrscr()`, `getch()`, `textcolor()`, `gotoxy()`, and all Borland primitives.
-- **▶ One-Click Execution**:
-  - **Run Button**: Dedicated Play icon in the editor title tab for any `.cpp` or `.c` file.
-  - **Context Menu**: Right-click any C/C++ editor tab or file in the Explorer and choose **"Run with TurboVs"**.
-  - **Keyboard Shortcut**: Press `Ctrl+F9` (or `Cmd+F9` on macOS) — the classic Turbo C++ shortcut!
-- **⏹ Runaway Program Protection**:
-  - Click the **Stop** button (`Ctrl+Shift+F9`) in the editor tab to terminate stuck loops or hanging DOSBox sessions immediately.
-- **📟 Integrated VS Code Terminal**:
-  - Launches a dedicated `"TurboVs"` terminal.
-  - Auto-clears before runs (configurable) and outputs compilation status.
-- **🔍 Smart Compiler Diagnostics**:
-  - Automatically parses Borland compiler output from `TCC.EXE`.
-  - Underlines syntax errors with red squiggles on the exact line in your VS Code editor.
-- **📁 Transparent DOS 8.3 Handling**:
-  - Safely handles modern filenames, long paths, and spaces without DOSBox filename truncation errors.
-- **🖥️ Dual Mode (CLI Runner & Full IDE)**:
-  - Run fast headless compilation directly to execution.
-  - Or run **"TurboVs: Open in Turbo C++ IDE"** to open the classic blue Borland IDE with your code preloaded!
-- **🌐 Cross-Platform**:
-  - Runs on **Windows**, **Linux**, and **macOS**.
+As shown in the screenshot above:
+1. **Editor Tab**: Open any `.cpp` or `.c` file with classic syntax (`#include <iostream.h>`, `#include <conio.h>`, `void main()`, `clrscr()`).
+2. **Run/Play Button**: Click the **Run with TurboVs** (`$(play)`) button in the top right editor tab or press `Ctrl+F9`.
+3. **Integrated Terminal (`TurboVs`)**: The bottom panel opens a dedicated terminal displaying real-time build and launch status.
+4. **Authentic DOSBox Window**: The classic CRT blue console window opens, executing your program with full interactive keyboard input (`cin`, `getch()`) and screen graphics.
+5. **Status Bar**: The bottom status bar shows `⚡ TurboVs: Ready`.
 
 ---
 
@@ -56,6 +50,22 @@ Many schools, universities, competitive programming curriculums, and retro devel
 | `TurboVs: Open in Turbo C++ IDE` | Command Palette | Launches the classic blue Borland IDE |
 | `TurboVs: Check Environment Status` | Command Palette | Diagnoses DOSBox and compiler paths |
 | `TurboVs: Configure Settings` | Command Palette | Quick configuration wizard |
+
+---
+
+## 📥 Quick 1-Click Installation
+
+### Windows (Automated All-in-One):
+1. Download [`install-globally.bat`](https://raw.githubusercontent.com/beyondbday69/turbovs/main/install-globally.bat).
+2. Double-click it. It will:
+   - Install the **TurboVs** extension globally into VS Code.
+   - Automatically install **DOSBox** using `winget`.
+   - Verify your `C:\TURBOC3` directory.
+
+### Linux / macOS:
+```bash
+curl -fsSL https://raw.githubusercontent.com/beyondbday69/turbovs/main/install-globally.sh | bash
+```
 
 ---
 
@@ -76,64 +86,8 @@ Open VS Code Settings (`Ctrl+,` or `Cmd+,`) and search for `turbovs`:
 
 ---
 
-## 📦 Setup & Prerequisites
+## 📝 Example Turbo C++ Program
 
-You need two components:
-1. **DOSBox** (or **DOSBox-X**)
-2. **Turbo C++ 3.0** (Borland C++ directory containing `BIN`, `INCLUDE`, and `LIB`)
-
-### 🪟 Windows Setup
-1. **Install DOSBox**:
-   - Download DOSBox from [dosbox.com](https://www.dosbox.com/download.php?main=1) or install via `winget install DOSBox.DOSBox`.
-2. **Extract Turbo C++**:
-   - Place Turbo C++ in `C:\TURBOC3` or `C:\TC`.
-   - Ensure it contains `BIN\TCC.EXE`, `INCLUDE`, and `LIB`.
-3. TurboVs auto-detects `C:\Program Files (x86)\DOSBox-0.74-3\DOSBox.exe` and `C:\TURBOC3`.
-
-### 🐧 Linux Setup (Ubuntu / Debian / Fedora / Arch)
-1. **Install DOSBox**:
-   ```bash
-   sudo apt-get update && sudo apt-get install -y dosbox
-   # or Fedora: sudo dnf install dosbox
-   # or Arch: sudo pacman -S dosbox
-   ```
-2. **Place Turbo C++**:
-   - Extract Turbo C++ to `~/turboc3` (or `/opt/turboc3`).
-   - Structure should look like:
-     ```
-     ~/turboc3/
-       ├── BIN/
-       │   ├── TCC.EXE
-       │   └── TC.EXE
-       ├── INCLUDE/
-       │   ├── iostream.h
-       │   └── conio.h
-       └── LIB/
-     ```
-3. Set the compiler path in VS Code (`Ctrl+,`):
-   ```json
-   "turbovs.compilerPath": "~/turboc3"
-   ```
-
-### 🍎 macOS Setup
-1. **Install DOSBox**:
-   ```bash
-   brew install dosbox-x
-   # or brew install --cask dosbox
-   ```
-2. **Place Turbo C++**:
-   - Extract Turbo C++ to `~/turboc3`.
-3. In VS Code settings (`Cmd+,`):
-   ```json
-   "turbovs.dosboxPath": "/opt/homebrew/bin/dosbox-x",
-   "turbovs.compilerPath": "~/turboc3"
-   ```
-
----
-
-## 📝 Example Turbo C++ Programs
-
-### 1. Interactive Console with `conio.h` and `iostream.h`
 ```cpp
 #include <iostream.h>
 #include <conio.h>
@@ -160,44 +114,6 @@ void main() {
     getch();
 }
 ```
-
-### 2. Authentic BGI Graphics (`graphics.h`)
-```cpp
-#include <graphics.h>
-#include <conio.h>
-#include <iostream.h>
-
-void main() {
-    int gd = DETECT, gm;
-    // C:\BGI or C:\TC\BGI inside DOSBox
-    initgraph(&gd, &gm, "C:\\BGI");
-    
-    setcolor(YELLOW);
-    circle(320, 240, 100);
-    
-    setcolor(CYAN);
-    line(100, 240, 540, 240);
-    line(320, 100, 320, 380);
-    
-    outtextxy(220, 360, "Turbo C++ BGI Graphics in TurboVs!");
-    
-    getch();
-    closegraph();
-}
-```
-
----
-
-## 🛠️ Diagnostics & Troubleshooting
-
-1. **"DOSBox executable not found"**:
-   - Make sure DOSBox is installed.
-   - Run `TurboVs: Configure Settings` and select your `dosbox.exe` or `dosbox` path.
-2. **"Turbo C++ directory not found"**:
-   - Ensure the directory contains `BIN` (with `TCC.EXE`), `INCLUDE`, and `LIB`.
-   - If your folder is named `turboc3`, set `turbovs.compilerPath` to that folder.
-3. **Run `TurboVs: Check Environment Status`**:
-   - Run this from the Command Palette (`Ctrl+Shift+P`) to see an exhaustive report of your setup.
 
 ---
 
